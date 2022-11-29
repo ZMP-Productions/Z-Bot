@@ -1,0 +1,6 @@
+TOKEN = "<TOKEN>"
+SMSNumber = "<PHONE NUMBER>"
+SMSUsername = "<GOOGLE ACC NAME>"
+SMSPassword = "<GOOGLE APP PASSWORD>"
+SMSCarrier = "<CARRIER EXTENSION>"
+reactionCombo = "<SECRET>"	
