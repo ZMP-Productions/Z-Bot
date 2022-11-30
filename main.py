@@ -516,7 +516,7 @@ async def invite(ctx):
 async def suspend(ctx, user: discord.Member=None, revoke=""):
     suspendedRole=discord.utils.get(ctx.message.guild.roles, id=1009836529146921070)
     if revoke.lower()=="off":
-        f=open(f"{user.display_name}_roles.txt")
+        f=open(f"{user.id}_roles.txt")
         if f.mode=='r':
             contents=f.read()
             roles=contents.split(", ")
@@ -1287,7 +1287,7 @@ async def vip(ctx, user):
                 await console.send(f"lp user {user} group add superstar")
                 await ctx.send(f"{user} is now a SUPERSTAR!")
             elif int(hours) < 5:
-                await ctx.send(f"5That user doesn't have enough time for VIP status.\n{user} has {hours} hours, {minutes} minutes online.")
+                await ctx.send(f"That user doesn't have enough time for VIP status.\n{user} has {hours} hours, {minutes} minutes online.")
         else:
             if int(hours) >= 5 and int(hours) < 10:
                 await console.send(f"lp user {user} group add vip")
@@ -1302,13 +1302,13 @@ async def vip(ctx, user):
                 await console.send(f"lp user {user} group add superstar")
                 await ctx.send(f"{user} is now a SUPERSTAR")
             elif int(hours) < 5:
-                await ctx.send(f"2That user doesn't have enough time for VIP status.\n{user} has {hours} hours online.")
+                await ctx.send(f"That user doesn't have enough time for VIP status.\n{user} has {hours} hours online.")
     else:
         if "minutes" in content and "day" not in content:
             minutes, sep, after=content.partition(" minute")
             before, sep, minutes=minutes.partition("hour")
             before, sep, minutes=minutes.partition(" ")
-            await ctx.send(f"1That user doesn't have enough time for VIP status\n{user} has {minutes} minutes online.")
+            await ctx.send(f"That user doesn't have enough time for VIP status\n{user} has {minutes} minutes online.")
         elif "seconds" in content and "minutes" in content and "day" not in content:
             minutes, sep, after=content.partition(" minute")
             before, sep, minutes=minutes.partition("hour")
@@ -1316,16 +1316,16 @@ async def vip(ctx, user):
             seconds, sep, after=content.partition(" second")
             before, sep, seconds=seconds.partition("minute")
             before, sep, seconds=seconds.partition(" ")
-            await ctx.send(f"3That user doesn't have enough time for VIP status\n{user} has {minutes} minutes, {seconds} seconds online.")
+            await ctx.send(f"That user doesn't have enough time for VIP status\n{user} has {minutes} minutes, {seconds} seconds online.")
         elif "seconds" in content and "day" not in content:
             seconds, sep, after=content.partition(" second")
             before, sep, seconds=seconds.partition("minute")
             before, sep, seconds=seconds.partition(" ")
-            await ctx.send(f"4That user doesn't have enough time for VIP status\n{user} has {seconds} seconds online. (lol)")
+            await ctx.send(f"That user doesn't have enough time for VIP status\n{user} has {seconds} seconds online. (lol)")
         elif "Player not found" in content:
             await ctx.send(f"Error: Invalid user")
         else:
-            await ctx.send(f"Process exited with no known error")
+            await ctx.send(f"Process exited with an unknown error")
 
 @client.command()
 @commands.has_any_role("Owner", "Admin")
@@ -1345,8 +1345,8 @@ async def lockdown(ctx, mode="staff"):
     array=before.split(", ")
     owners=["OverdriveZR"]
     admins=["Dimensional_Duck"]
-    mods=["Mxnsoo", "Swampyemerson"]
-    helpers=["doggey200000", "FoxtatoThePotato"]
+    mods=["Mxnsoo", "sundew001", "Champthekitten"]
+    helpers=["nebula00"]
     if mode != "end" and mode != "backup" and mode != "restore":
         num=0
         if ctx.author.id != 968356025461768192:
@@ -1369,7 +1369,7 @@ async def lockdown(ctx, mode="staff"):
                 if num <= int(re.search(r'\d+', fname).group(0)):
                     num=int(re.search(r'\d+', fname).group(0))
         await ctx.send(f"A backup was created, consisting of {num} player accounts")
-        await ctx.send("Initiating lockdown")
+        await ctx.send("Initiating lockdown...")
         msg=await ctx.channel.fetch_message(ctx.channel.last_message_id)
         before, sep, msg=str(msg).partition("<Message id=")
         msg, sep, after=str(msg).partition(" channel=<")
@@ -1618,10 +1618,59 @@ async def remwl(ctx, version, *, tag):
 @client.command()
 @commands.has_any_role("Owner", "Moderator", "Admin")
 async def mcban(ctx, tag, *, reason="None given"):
-    print(f"{tag} was removed banned from the minecraft server by {ctx.author} with reason \"Banned by {ctx.author} in discord with reason: {reason}\"")
+    print(f"{tag} was removed banned from the minecraft server by {ctx.author} with reason \"Banned by {ctx.author} in Discord with reason: {reason}\"")
     channel=client.get_channel(950858523846271007)
-    await channel.send(f"ban {tag} Banned by {ctx.author} in discord with reason: {reason}")
+    await channel.send(f"ban {tag} Banned by {ctx.author} in Discord with reason: {reason}")
     await ctx.send(f"Banned {tag} with reason \"{reason}\"")
+    f=open("LOOKUP.txt")
+    contents=f.read().lower()
+    contents=contents.split(", ")
+    found=False
+    notFound=True
+    for i in contents:
+        if tag.lower() in i:
+            found=True
+            notFound=False
+            rawData=i
+        else:
+            notFound=True
+    if notFound==True:
+        if found==False:
+            pass
+    if found==True:
+        before, sep, userID=rawData.partition("id")
+        userID, sep, after=userID.partition("-")
+        user=await client.fetch_user(userID)
+
+        await ctx.send(f"{tag} was banned from the Minecraft server. Would you like to ban them on Discord?\nUsername: {user}")
+        def check_rule(message: discord.Message):
+            return message.author.id==ctx.message.author.id
+        try:
+            answer=(await client.wait_for('message', check=check_rule, timeout=20)).content
+        except (asyncio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
+            await ctx.send("Took too long to answer. User will not be banned.")
+            return
+        if answer.lower()=='yes':
+            guild = client.get_guild(870964644523692053)
+            member = await guild.fetch_member(id)
+            await member.ban(reason=reason)
+        elif answer.lower()=='no':
+            await ctx.send("User will not be banned.")
+        else:
+            await ctx.send("User will not be banned. Invalid input.")
+
+
+
+
+
+
+
+
+
+
+
+
+    f.close()
 
 @client.command()
 @commands.has_any_role("Owner", "Moderator", "Admin")
