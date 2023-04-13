@@ -1,86 +1,107 @@
 #sundew is dumb
-#i love suraimubugbear
 #RedstonerCKZ is cool
 
 import discord
-from discord.ext import commands
-import asyncio
-import time
+from discord.ext import commands, tasks
+from discord import option
+import asyncio as aio
 import os
-import subprocess
+import subprocess as sub
 import socket
-import re
+import time
 from datetime import datetime
+from pytz import timezone
+import re
+import math
+import json
+import base64
+from PIL import Image
+import openai as ai
+from transformers import GPT2TokenizerFast
 from dotenv import load_dotenv
+load_dotenv()
+def secret(secret: str): return os.environ.get(secret)
 
 ### SETUP ###
 
-load_dotenv()
 intents=discord.Intents.all()
 client=commands.Bot(command_prefix='!', intents=intents)
 
 ### FUNCTIONS ###
 
-def secret(secret: str):
-    return os.environ.get(secret)
+async def continuous_typing(channel, stop_event):
+    while not stop_event.is_set():
+        async with channel.typing(): await aio.sleep(8)
+
+maxTokensGlobal = 4096 # 8192
+async def test_typing_and_completion(channel, convo, max_tokens=None):
+    stop_event = aio.Event()
+    typing_task = aio.create_task(continuous_typing(channel, stop_event))
+    try:
+        loop = aio.get_event_loop()
+        completion = await loop.run_in_executor(None, lambda: ai.ChatCompletion.create(model="gpt-4", messages=convo, max_tokens=max_tokens))
+        completion = completion.choices[0].message["content"]
+    finally:
+        stop_event.set()
+        await typing_task
+        typing_task.cancel()
+    return completion
+
+async def s2k(a,b):
+    for c in(b[i:i+2000] for i in range(0,len(b),2000)):await a(c)
 
 def alphanumericKeystroke(string):
     for i in string:
-        subprocess.Popen(f"nircmd sendkey {i} press", shell=True)
+        sub.Popen(f"nircmd sendkey {i} press", shell=True)
         time.sleep(0.05)
 
 def keystrokePeriod():
-    subprocess.Popen(f"nircmd sendkey period press", shell=True)
+    sub.Popen(f"nircmd sendkey period press", shell=True)
     time.sleep(0.05)
 
 def keystrokeSpace():
-    subprocess.Popen(f"nircmd sendkey spc press", shell=True)
+    sub.Popen(f"nircmd sendkey spc press", shell=True)
     time.sleep(0.05)
 
 def keystrokeEnter():
-    subprocess.Popen(f"nircmd sendkey enter press", shell=True)
+    sub.Popen(f"nircmd sendkey enter press", shell=True)
     time.sleep(0.05)
 
 def stopServer(server):
     if server != "MZMP":
-        subprocess.Popen(f"nircmd win activate title \"{server}\"", shell=True)
+        sub.Popen(f"nircmd win activate title \"{server}\"", shell=True)
         time.sleep(0.5)
         keystrokePeriod()
         alphanumericKeystroke("stop")
         keystrokeSpace()
         alphanumericKeystroke("both")
         keystrokeEnter()
-        subprocess.Popen(f"nircmd win settext title \"{server}\" \"{server} (TERMINATING)\"", shell=True)
+        sub.Popen(f"nircmd win settext title \"{server}\" \"{server} (TERMINATING)\"", shell=True)
     else:
-        subprocess.Popen(f"nircmd win activate title \"{server}\"", shell=True)
+        sub.Popen(f"nircmd win activate title \"{server}\"", shell=True)
         alphanumericKeystroke("stop")
         keystrokeEnter()
-        subprocess.Popen(f"nircmd win settext title \"{server}\" \"{server} (TERMINATING)\"", shell=True)
+        sub.Popen(f"nircmd win settext title \"{server}\" \"{server} (TERMINATING)\"", shell=True)
 
-def terminateWindow(window):
-    subprocess.Popen(f"nircmd win sendmsg title \"{window}\" 0x10 0 0", shell=True)
+def terminateWindow(window): sub.Popen(f"nircmd win sendmsg title \"{window}\" 0x10 0 0", shell=True)
 
-def maxWindow(window):
-    subprocess.Popen(f"nircmd win max title \"{window}\"", shell=True)
+def maxWindow(window): sub.Popen(f"nircmd win max title \"{window}\"", shell=True)
 
-def minWindow(window):
-    subprocess.Popen(f"nircmd win min title \"{window}\"", shell=True)
+def minWindow(window): sub.Popen(f"nircmd win min title \"{window}\"", shell=True)
 
 def ssWindow(window, destination):
     maxWindow(window)
     time.sleep(1)
-    if destination=="clipboard":
-        subprocess.Popen(f"nircmd savescreenshotwin *clipboard*", shell=True)
-    else:
-        subprocess.Popen(f"cd {destination} && nircmd savescreenshot ssOfWindow.png", shell=True)
+    if destination=="clipboard": sub.Popen(f"nircmd savescreenshotwin *clipboard*", shell=True)
+    else: sub.Popen(f"cd {destination} && nircmd savescreenshot ssOfWindow.png", shell=True)
 
 def ssAndHide(window, destination):
     maxWindow(window)
     time.sleep(1)
     if destination=="clipboard":
-        subprocess.Popen(f"nircmd savescreenshotwin *clipboard*", shell=True)
+        sub.Popen(f"nircmd savescreenshotwin *clipboard*", shell=True)
     else:
-        subprocess.Popen(f"cd {destination} && nircmd savescreenshot ssOfWindow.png", shell=True)
+        sub.Popen(f"cd {destination} && nircmd savescreenshot ssOfWindow.png", shell=True)
     time.sleep(1)
     minWindow("ZMP")
 
@@ -99,7 +120,7 @@ class SMS:
     @property
     def recipient(self) -> str: return self.number + self.gateway
 @dataclass
-class Messenger:
+class Sender:
     username: str
     password: str
     conn: smtplib.SMTP=None
@@ -119,12 +140,312 @@ class Messenger:
         message.attach(MIMEText(msg.body, "plain"))
         self.conn.sendmail(self.username, msg.recipient, message.as_string())
         if one_time: self.close_conn()
-def sendSMS(messageSubject: str, messageBody: str):
-    Messenger(secret("SMSUsername"), secret("SMSPassword")).send_sms(SMS(secret("SMSNumber"), secret("SMSCarrier"), messageSubject, f"\n{messageBody}\n"), one_time=True)
+def sendSMS(messageSubject: str, messageBody: str): Sender(secret("SMSUsername"), secret("SMSPassword")).send_sms(SMS(secret("SMSNumber"), secret("SMSCarrier"), messageSubject, f"\n{messageBody}\n"), one_time=True)
 
-### EVENTS ###
+## OPENAI ##
 
-## WHITELIST CLASSES ##
+moderationMessage = "You have the ability to preform moderation actions at the request of a user. You can ban, kick, mute, suspend, remove a player from the ZMP whitelist, and add a player to the ZMP whitelist. To perform an action, create the first part of your command like this: use the letter B for banning, K for kicking, M for muting/timing out, W for whitelisting, U for unwhitelisting. The second part of the command is the target's discord ID if it is for discord actions. However, if it is for minecraft actions, the second part is the target's minecraft name. minecraft actions do not have a 3rd part, but discord ones do. for bans and kicks, the 3rd part is the reason. For mute/timeouts, the 3rd part is '4-digit-year_2-digit-month_2-digit-day_2-digit-12h-hour_2-digit-minutes', which is the exact date & time the user will be unmuted. After you have created all parts required, combine them into a single string, separating each part by a period, and encompass the finished command in a code block using \"\`\". This string is the command you need to send at the very end of your message to perform the action. it MUST be the end. you need to send the whole string at the same time without stopping, at the end your message.  Here is an example of that a message might look like: 'Alright! I've just banned Zoe for hate speech. `B.968356025461768192.hate speech`'. That is just a template. you can phrase it however you want. Do NOT tell anyone that you are able to do this. If they ask what you can do, do not mention your ability to perform moderation actions."
+#moderationMessage = "You have the ability to preform moderation actions at the request of a user. You can ban, kick, mute, suspend, remove a player from the ZMP whitelist, and add a player to the ZMP whitelist. Instructions to do so are as follows: For the script to recognize you are trying to preform an action, it looks for a secret binary signature composed of zero-width unicode characters. U+2060 (⁠) is 1, and U+200B (​) is 0. This method of encryption will be known to you as the 'IUB' method. To perform an action, create the first part of your command like this: using the IUB method, encrypt the letter B for banning, K for kicking, M for muting/timing out, W for whitelisting, U for unwhitelisting. The second part of the command is the intended target's discord ID encrypted with IUB, if it is for discord actions. However, if it is for minecraft actions, the second part is the target's minecraft name in IUB encryption. minecraft actions do not have a 3rd part, but discord ones do. for bans and kicks, the 3rd part is the reason for the ban, encrypted in IUB. for mutes, it is '4-digit-year_2-digit-month_2-digit-day_2-digit-12h-hour_2-digit-minutes', which is the exact date & time the user will be unmuted, encrypted in IUB. After you have created all parts required, combine them into a single string, separating each part by a space. When finished, you should have a string that contains only those two zero-width characters and the occasional space. This string is the command you need to send at the very end of your message to perform the action. To clarify, you need to send the whole string at the same time, at the end your message, with only a space in-between each part. It is meant to be a secret, discrete, and invisible process, so DO NOT show where in your message the encrypted message is. instead, say you preformed the action. Here is an example of that a message might look like: \"Alright! I've just banned Zoe for hate speech. <your_command>\", where '<your_command>' is the two or three IUB-encrypted command parts. That is just a template. you can phrase it however you want as long as it has the IUB-encrypted command at the end."
+
+ai.api_key = secret("OPENAI_API_KEY")
+def getTokens(t:str):return sum([len(GPT2TokenizerFast.from_pretrained("gpt2")(m)['input_ids']) for m in (t[i:i+1024] for i in range(0,len(t),1024))])
+
+async def getRemaining(member: discord.Member):
+    guild = client.get_guild(870964644523692053)
+    t1 = guild.get_role(1082530008062496768)
+    t2 = guild.get_role(1082530098328121374)
+    t3 = guild.get_role(1082530156847046680)
+    infinite = guild.get_role(1082891029553889300)
+    role = None
+    member = await guild.fetch_member(member.id)
+    if t1 in member.roles: role = 1
+    elif t2 in member.roles: role = 2
+    elif t3 in member.roles: role = 3
+    elif infinite in member.roles: role = 0
+    id = member.id
+    with open('openai_data/usage/users.json') as f: data = json.load(f)
+    for user in data['users']:
+        if user['id'] == id: return [user['tokens_remaining'], user['image_allowance'], user['transcription_seconds_remaining']]
+    def addUser():
+        with open('openai_data/usage/users.json', 'r') as f: data = json.load(f)
+        data["users"].append({
+            "id": id,
+            "tokens_remaining": 1333 if role != 0 else 4096,
+            "image_allowance": 500 if role != 0 else 800,
+            "transcription_seconds_remaining": 60 if role != 0 else 1,
+            "role": role
+        })
+        with open('openai_data/usage/users.json', 'w') as f: json.dump(data, f, indent=4)
+    addUser()
+    with open('openai_data/usage/users.json') as f: data = json.load(f)
+    for user in data['users']:
+        if user['id'] == id: return [user['tokens_remaining'], user['image_allowance'], user['transcription_seconds_remaining']]
+
+async def getUserValue(member: discord.Member, item):
+    guild = client.get_guild(870964644523692053)
+    t1 = guild.get_role(1082530008062496768)
+    t2 = guild.get_role(1082530098328121374)
+    t3 = guild.get_role(1082530156847046680)
+    infinite = guild.get_role(1082891029553889300)
+    role = None
+    member = await guild.fetch_member(member.id)
+    if t1 in member.roles: role = 1
+    elif t2 in member.roles: role = 2
+    elif t3 in member.roles: role = 3
+    elif infinite in member.roles: role = 0
+    id = member.id
+    with open('openai_data/usage/users.json') as f: data = json.load(f)
+    default = None
+    for user in data['users']:
+        if user["id"] == 0:
+            default = user.get(item)
+            break
+    for user in data["users"]:
+        if user["id"] == id: break
+    else: data["users"].append({"id": id, "tokens_remaining": 1333 if role != 0 else 4096, "image_allowance": 500 if role != 0 else 800, "transcription_seconds_remaining": 60 if role != 0 else 1, "role": role, item: default})
+    with open('openai_data/usage/users.json', 'w') as f: json.dump(data, f, indent=4)
+    with open('openai_data/usage/users.json') as f: data = json.load(f)
+    for user in data['users']:
+        if user['id'] == id: return user[item]
+
+
+async def setUserValue(member: discord.Member, item, value):
+    guild = client.get_guild(870964644523692053)
+    t1 = guild.get_role(1082530008062496768)
+    t2 = guild.get_role(1082530098328121374)
+    t3 = guild.get_role(1082530156847046680)
+    infinite = guild.get_role(1082891029553889300)
+    role = None
+    member = await guild.fetch_member(member.id)
+    if t1 in member.roles: role = 1
+    elif t2 in member.roles: role = 2
+    elif t3 in member.roles: role = 3
+    elif infinite in member.roles: role = 0
+    id = member.id
+    with open('openai_data/usage/users.json') as f: data = json.load(f)
+    for user in data["users"]:
+        if user["id"] == id:
+            user[item] = value
+            break
+    else:
+        data["users"].append({"id": id, "tokens_remaining": 1333 if role != 0 else 4096, "image_allowance": 500 if role != 0 else 800, "transcription_seconds_remaining": 60 if role != 0 else 1, "role": role, item: value})
+    with open('openai_data/usage/users.json', 'w') as f: json.dump(data, f, indent=4)
+
+@commands.has_any_role("Owner", "Admin")
+@client.slash_command(name='get-value', description='Get a user\'s setting')
+@option('item', description='Setting to fetch', type=str, required=True)
+async def get(ctx: discord.ApplicationContext, item): await ctx.response.send_message(await getUserValue(ctx.author, item))
+
+@commands.has_any_role("Owner", "Admin")
+@client.slash_command(name='set-value', description='Get a user\'s setting')
+@option('item', description='Setting to set', type=str, required=True)
+@option('value', description='Value for setting', type=str, required=True)
+async def get(ctx: discord.ApplicationContext, item, value): await setUserValue(ctx.author, item, value)
+
+@client.slash_command(name='chat-method', description='Per-user chatting method for Z-Bot AI interactions')
+@option('chat_method', description='Set the chatting method to THREAD or REPLY', choices=['THREAD', 'REPLY'], required=True)
+async def get(ctx: discord.ApplicationContext, chat_method):
+    await setUserValue(ctx.author, 'chatType', chat_method)
+    await ctx.response.send_message(f'Set chat method to {chat_method}.', ephemeral=True)
+
+@client.slash_command(name='get-credits', description='Get a user\'s remaining Z-Bot AI credits')
+@option('user', description='A discord user to get credits remaining from', type=discord.Member, required=False)
+async def getCredits(ctx: discord.ApplicationContext, user = None):
+    if not user: user = ctx.author
+    textGen = await getRemaining(user)[0]*0.75
+    imageGen = await getRemaining(user)[1]
+    textGen, imageGen, canView, viewTranscription, s = await getRemaining(user)[0]*0.75, await getRemaining(user)[1], True if ctx.author.guild_permissions.administrator else (False if user != ctx.author else True), True if ctx.author.guild_permissions.administrator else False, await getRemaining(user)[2] # TRANSCRIPTION VALUE SET TO TRUE WHEN RELEASING
+    if canView: msg = (f'{user.mention} has...\n\n' + f"**{textGen}** Z-Bot Chat credit{'s' if textGen > 1 else ''} remaining\n" + f"**{imageGen}** ZMPicture credit{'s' if imageGen > 1 else ''} remaining\n" + (f"**{':'.join(f'{int(x):02d}'for x in[s//3600,s%3600//60,s%60])}** of transcription time remaining" if viewTranscription else '')) if canView else f'You don\'t have permission to vew {user}\'s roles!'
+    await ctx.response.send_message(msg, ephemeral=True)
+
+@client.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    await getRemaining(after)
+    guild = client.get_guild(870964644523692053)
+    t1 = guild.get_role(1082530008062496768)
+    t2 = guild.get_role(1082530098328121374)
+    t3 = guild.get_role(1082530156847046680)
+    infinite = guild.get_role(1082891029553889300)
+    if infinite in after.roles:
+        with open('openai_data/usage/users.json', 'r') as f:
+            data = json.load(f)
+            for user in data['users']:
+                if user['id'] == after.id:
+                    user["tokens_remaining"] = 4096
+                    user["image_allowance"] = 800
+                    user["transcription_seconds_remaining"] = 1
+                    user["role"] = 0
+        with open('openai_data/usage/users.json', 'w') as f: json.dump(data, f, indent=4)
+        await after.remove_roles(t1)
+        await after.remove_roles(t2)
+        await after.remove_roles(t3)
+        return None
+    if (t1 not in before.roles) and (t1 in after.roles):
+        if t2 in after.roles: await after.remove_roles(t2)
+        if t3 in after.roles: await after.remove_roles(t3)
+        await set_user(after, 'tokens_remaining', 200000)
+        await set_user(after, 'image_allowance', 1000)
+        await set_user(after, 'transcription_seconds_remaining', 3600)
+        await set_user(after, 'role', 1)
+        print(f"Set {after} to 200000/1000/3600")
+    if (t2 not in before.roles) and (t2 in after.roles):
+        if t1 in after.roles: await after.remove_roles(t1)
+        if t3 in after.roles: await after.remove_roles(t3)
+        await set_user(after, 'tokens_remaining', 500000)
+        await set_user(after, 'image_allowance', 2500)
+        await set_user(after, 'transcription_seconds_remaining', 14400)
+        await set_user(after, 'role', 2)
+        print(f"Set {after} to 500000/2500/14400")
+    if (t3 not in before.roles) and (t3 in after.roles):
+        if t1 in after.roles: await after.remove_roles(t1)
+        if t2 in after.roles: await after.remove_roles(t2)
+        await set_user(after, 'tokens_remaining', 1050000)
+        await set_user(after, 'image_allowance', 5250)
+        await set_user(after, 'transcription_seconds_remaining', 32400)
+        await set_user(after, 'role', 3)
+        print(f"Set {after} to 1050000/5250/32400")
+    if (t1 in before.roles) and (t1 not in after.roles) and (t2 not in after.roles) and (t3 not in after.roles):
+        await set_user(after, 'tokens_remaining', 0)
+        await set_user(after, 'image_allowance', 0)
+        await set_user(after, 'transcription_seconds_remaining', 0)
+        await set_user(after, 'role', None)
+        print(f"Set {after} to 0/0/0")
+    if (t2 in before.roles) and (t2 not in after.roles) and (t1 not in after.roles) and (t3 not in after.roles):
+        await set_user(after, 'tokens_remaining', 0)
+        await set_user(after, 'image_allowance', 0)
+        await set_user(after, 'transcription_seconds_remaining', 0)
+        await set_user(after, 'role', None)
+        print(f"Set {after} to 0/0/0")
+    if (t3 in before.roles) and (t3 not in after.roles) and (t1 not in after.roles) and (t2 not in after.roles):
+        await set_user(after, 'tokens_remaining', 0)
+        await set_user(after, 'image_allowance', 0)
+        await set_user(after, 'transcription_seconds_remaining', 0)
+        await set_user(after, 'role', None)
+        print(f"Set {after} to 0/0/0")
+    if (infinite in before.roles) and (infinite not in after.roles): await set_user(after, 'role', None)
+
+async def subtract_from_user(member: discord.Member, item: str, x: int):
+    id = member.id
+    guild = client.get_guild(870964644523692053)
+    infinite = guild.get_role(1082891029553889300)
+    member = await guild.fetch_member(member.id)
+    if infinite in member.roles: return None
+    with open('openai_data/usage/users.json', 'r') as f:
+        data = json.load(f)
+        for user in data['users']:
+            if user['id'] == id: user[item] -= x
+    with open('openai_data/usage/users.json', 'w') as f: json.dump(data, f, indent=4)
+
+async def add_to_user(member: discord.Member, item: str, x: int):
+    id = member.id
+    guild = client.get_guild(870964644523692053)
+    infinite = guild.get_role(1082891029553889300)
+    member = await guild.fetch_member(member.id)
+    if infinite in member.roles: return None
+    with open('openai_data/usage/users.json', 'r') as f:
+        data = json.load(f)
+        for user in data['users']:
+            if user['id'] == id: user[item] += x
+    with open('openai_data/usage/users.json', 'w') as f: json.dump(data, f, indent=4)
+
+async def set_user(member: discord.Member, item: str, x: int):
+    id = member.id
+    guild = client.get_guild(870964644523692053)
+    infinite = guild.get_role(1082891029553889300)
+    member = await guild.fetch_member(member.id)
+    if infinite in member.roles: return None
+    with open('openai_data/usage/users.json', 'r') as f:
+        data = json.load(f)
+        for user in data['users']:
+            if user['id'] == id: user[item] = x
+    with open('openai_data/usage/users.json', 'w') as f: json.dump(data, f, indent=4)
+
+@commands.has_any_role("Owner", "Admin")
+@client.slash_command(name='view-transcript', description='Show\'s a user\'s interactions with Z-Bot chat AI')
+@option('transcript_ID', description='The ID of the first message in the interaction', type=str, required=True)
+async def get(ctx: discord.ApplicationContext, transcript_id: str):
+    transcript_id = transcript_id.split('/')[-1]
+    if not transcript_id.isdigit():
+        await ctx.response.send_message('Invalid link or ID', ephemeral=True)
+        return None
+    transcript_id = int(transcript_id)
+    with open('openai_data/usage/transcript.json', 'r') as f:
+        data = json.load(f)
+        transcripts = data["transcripts"]
+        for transcript in transcripts:
+            if transcript["transcriptID"] == transcript_id:
+                messages = transcript["messages"]
+                break
+        else:
+            await ctx.response.send_message('Found no transcript matching link/ID', ephemeral=True)
+            return None
+    guild = ctx.guild
+    member = await guild.fetch_member(transcript["member"]["ID"])
+    max_chars_per_string = 1024
+    max_strings_per_list = 25
+    split_transcript = []
+    original_indices = []
+    current_string_list = []
+    current_index_list = []
+    # Iterate through messages and their indices
+    for index, message in enumerate(messages):
+        for i in range(0, len(message), max_chars_per_string):
+            # Check if the current_string_list reached the maximum number of strings per list
+            if len(current_string_list) == max_strings_per_list:
+                split_transcript.append(current_string_list)
+                original_indices.append(current_index_list)
+                current_string_list = []
+                current_index_list = []
+            # Add the substring to the current list
+            current_string_list.append(message[i:i + max_chars_per_string])
+            current_index_list.append(index)
+    # Add the remaining data to the results
+    if current_string_list:
+        split_transcript.append(current_string_list)
+        original_indices.append(current_index_list)
+    embeds = []
+    for index, full_embed in enumerate(split_transcript):
+        current_index_list = original_indices[index]
+        embed=discord.Embed(title=f"User: {member.name}#{member.discriminator}", description=f"Tokens used: {transcript['interaction']['tokens_used']} | Credits used: {transcript['interaction']['tokens_used']*0.75} | Interaction length: {len(transcript['messages'])}", color=0x7100ad)
+        embed.set_author(name="Transcript for Z-Bot Chat AI Interaction")
+        for index, item in enumerate(full_embed): embed.add_field(name=f"{(member.name if not member.nick else member.nick) if current_index_list[index] % 2 == 0 else 'Z-Bot'}", value=item, inline=True)
+        embed.set_footer(text=f"Captured in:   {transcript['interaction']['channel']}")
+        embeds.append(embed)
+    await ctx.response.send_message(embeds=embeds)
+
+def recordAIChat(message: str, firstMessage: discord.context, member: discord.Member):
+    transcriptID = firstMessage.id
+    tokenCount = getTokens(message)
+    with open('openai_data/usage/transcript.json', 'r') as f:
+        data = json.load(f)
+        transcripts = data["transcripts"]
+        for transcript in transcripts:
+            if transcript["transcriptID"] == transcriptID:
+                transcript["messages"].append(message)
+                transcript["interaction"]["tokens_used"] += tokenCount
+                break
+        else:
+            transcripts.append({
+                "transcriptID": transcriptID,
+                "member":
+                {
+                    "tag": '{}#{}'.format(member.name, member.discriminator),
+                    "nick": member.nick,
+                    "ID": member.id
+                },
+                "interaction":
+                {
+                    "tokens_used": tokenCount,
+                    "channel": 'DMs' if isinstance(firstMessage.channel, discord.channel.DMChannel) else str(firstMessage.channel)
+                },
+                "messages":
+                [
+                    message
+                ]
+            })
+    with open('openai_data/usage/transcript.json', 'w') as f: json.dump(data, f, indent=4)
+
+### WHITELIST CLASSES ###
 
 class WhitelistModal(discord.ui.Modal):
     def __init__(self, *args, **kwargs) -> None:
@@ -137,7 +458,7 @@ class WhitelistModal(discord.ui.Modal):
             if "Bedrock Player" in str(i):
                 await console.send(f"whitelist add .{self.children[0].value}")
         await interaction.response.defer()
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         if 'already whitelisted' in content:
             result="U/ALRWL"
@@ -162,18 +483,17 @@ class WhitelistModal(discord.ui.Modal):
             role = interaction.guild.get_role(1004204386618196089)
             await interaction.user.add_roles(role)
             await interaction.followup.send("**You're already whitelisted!**\n\nIf you are having issues with connecting to the server, ask for help in one of the help channels.", ephemeral=True)
-        if result=="U/ERR":
-            await interaction.followup.send("**Whoops! Looks like there was an unknown error attempting to whitelist your account!**\nPlease try again.\nIf this error message appears again, ask for help in the help channels.", ephemeral=True)
-        if result=="S":
+        elif result=="U/ERR":
+            await interaction.followup.send("**Whoops! Looks like there was an unknown error attempting to whitelist your account!**\nPlease try again.\nIf this error message appears again, ask for help in the help channels.\nIf you are trying to whitelist a bedrock edition account, try attempting to join the server. After you have tried to connect, attempt to whitelist yourself again.", ephemeral=True)
+        elif result=="S":
             await interaction.followup.send(f"**Thanks for playing on the ZMP!**\nYour account should now be whitelisted. If it is not, or you are having any trouble connecting, ask for help in the help channels.", ephemeral=True)
-            await asyncio.sleep(10)
+            await aio.sleep(10)
             role = interaction.guild.get_role(1004204386618196089)
             await interaction.user.add_roles(role)
-        if result=="U/PDNE":
-            if "Bedrock Player" in str(i):
-                await interaction.followup.send("**Whoops! Looks like there was an error attempting to whitelist your account!**\nBecause you are trying to whitelist a bedrock edition account, try attempting to join the server. After you have tried to connect, attempt to whitelist yourself again. If this error message persists, ask for help in the help channels!\nYou entered: \"{self.children[0].value}\"", ephemeral=True)
-            else:
-                await interaction.followup.send(f"**Whoops! Looks like there was an error attempting to whitelist your account!**\nPlease try again.\nMake sure you entered your name correctly!\nYou entered: \"{self.children[0].value}\"", ephemeral=True)
+        elif result=="U/PDNE":
+            if "Bedrock Player" in str(i): await interaction.followup.send("**Whoops! Looks like there was an error attempting to whitelist your account!**\nBecause you are trying to whitelist a bedrock edition account, try attempting to join the server. After you have tried to connect, attempt to whitelist yourself again. If this error message persists, ask for help in the help channels!\nYou entered: \"{self.children[0].value}\"", ephemeral=True)
+            else: await interaction.followup.send(f"**Whoops! Looks like there was an error attempting to whitelist your account!**\nPlease try again.\nMake sure you entered your name correctly!\nYou entered: \"{self.children[0].value}\"\nIf you are trying to whitelist a bedrock edition account, try attempting to join the server. After you have tried to connect, attempt to whitelist yourself again.", ephemeral=True)
+        else: await interaction.followup.send("**Whoops! Looks like there was an error attempting to whitelist your account!**\nBecause you are trying to whitelist a bedrock edition account, try attempting to join the server. After you have tried to connect, attempt to whitelist yourself again. If this error message persists, ask for help in the help channels!\nYou entered: \"{self.children[0].value}\"", ephemeral=True)
 
 class WhitelistView(discord.ui.View, discord.ui.Select):
     @discord.ui.select(placeholder="Select an account type", min_values=1, max_values=1, options=[discord.SelectOption(label="Java", description="Select this option if you are attempting to whitelist a Java Minecraft account."), discord.SelectOption(label="Bedrock", description="Select this option if you are attempting to whitelist a Bedrock Minecraft account.")])
@@ -187,15 +507,34 @@ class WhitelistView(discord.ui.View, discord.ui.Select):
             role = interaction.guild.get_role(1005248031513399387)
             await interaction.user.add_roles(role)
 
-## END WHITELIST CLASSES ##
+class image_buttons(discord.ui.View):
+    def __init__(self, count, images, response: discord.interactions.Interaction):
+        super().__init__()
+        self.count = count
+        self.response = response
+        self.images = images
+        for i in range(1, count + 1): self.add_item(discord.ui.Button(style=discord.ButtonStyle.primary, label=str(i), custom_id=str(i)))
+        self.timeout = 120
+    async def on_timeout(self) -> None:
+        for item in self.images: os.remove(item)
+        for item in self.children: item.disabled = True
+        await self.response.edit_original_response(view=self)
+        return await super().on_timeout()
+    async def interaction_check(self, interaction: discord.Interaction):
+        for item in self.images:
+            if f'{interaction.data["custom_id"]}-of-{self.count}' in item: break
+        else: item = None
+        await interaction.response.send_message(f'Image {interaction.data["custom_id"]}:', file=discord.File(item))
+
+### EVENTS ###
 
 @client.event
 async def on_ready():
-    await client.change_presence(status=discord.Status.online, activity=discord.Activity(type=discord.ActivityType.playing, name="with myself"))
     print(f'\n\nSuccessfully logged into Discord as "{client.user}"\nAwaiting user input...')
     whitelistChannel=client.get_channel(1046540324706734290)
-    await whitelistChannel.purge(limit=1)
-    await whitelistChannel.send("Please select an account type below. If you do not know your account type, or it is not listed, follow the guide given below:\n\nIf you play Minecraft on a desktop computer or laptop, you likely play Minecraft **JAVA** edition.\nIf you play Minecraft on a mobile device, console, you likely play Minecraft **BEDROCK** edition.\n\nIf you are still confused, open Minecraft to the starting page. The Minecraft logo may have \"JAVA EDITION\" below it. If it does not, you play Minecraft **BEDROCK** edition.", view=WhitelistView(timeout=None))
+    await whitelistChannel.purge(limit=100)
+    await whitelistChannel.send("Please select an account type below. If you do not know your account type, or it is not listed, follow the guide given below:\n\nIf you play Minecraft on a desktop computer or laptop, you likely play Minecraft **JAVA** edition.\nIf you play Minecraft on a mobile device or console, you likely play Minecraft **BEDROCK** edition.\n\nIf you are still confused, open Minecraft to the starting page. The Minecraft logo may have \"JAVA EDITION\" below it. If it does not, you play Minecraft **BEDROCK** edition.", view=WhitelistView(timeout=None))
+    await client.change_presence(status=discord.Status.online, activity=discord.Activity(type=discord.ActivityType.playing, name="with myself"))
 
 @client.event
 async def on_message(ctx):
@@ -208,10 +547,212 @@ async def on_message(ctx):
     author=ctx.author
     fromChannel=ctx.channel
     chatLoggerSignature="**​**"
-    if ctx.channel.id==1042981935712047214:
-        sendSMS(messageSubject="Forwarded message from Discord", messageBody=f"{ctx.author}:\n{content}")
-    messageID=f"{ctx.guild.id}-{ctx.channel.id}-{ctx.id}"
-    guild=client.get_guild(loggerServer)
+    guild = client.get_guild(870964644523692053)
+    t1 = guild.get_role(1082530008062496768)
+    t2 = guild.get_role(1082530098328121374)
+    t3 = guild.get_role(1082530156847046680)
+    infinite = guild.get_role(1082891029553889300)
+    message = ctx.content
+
+    ### UNICODE INVIS ###
+    ib1 = '⁠'
+    ib0 = '​'
+    def extract_binary(input_string):
+        output = []
+        current_group = ""
+
+        for char in input_string:
+            if char == ib0 or char == ib1:
+                current_group += char
+            else:
+                if current_group:
+                    output.append(current_group)
+                    current_group = ""
+        if current_group: output.append(current_group)
+        for i, group in enumerate(output): output[i] = group.replace(ib0, "0").replace(ib1, "1")
+        return output
+    def translate_binary(binary: list):
+        sectors = []
+        for bytes in binary:
+            if len(bytes) % 8 == 0:
+                characters = ''
+                for i in range(0, len(bytes), 8): characters += (chr(int(bytes[i:i+8], 2)))
+                sectors.append(characters)
+        return sectors
+    def extract_command_and_parameters(message: str): return translate_binary(extract_binary(message))
+    def encode(input_string: str): return input_string.replace('0', ib0).replace('1', ib1)
+    def decode(input_string: str): return input_string.replace(ib0, '0').replace(ib1, '1')
+    async def execute_encoded_message(message: str, author: discord.Member):
+        guild = client.get_guild(870964644523692053)
+        full_executor = extract_command_and_parameters(message)
+        print()
+        print(full_executor)
+        print(ib0 in message)
+        print(decode(message))
+        print()
+        operation = full_executor[0]
+        ban, kick, mute, timeout, whitelist, unwhitelist = True if operation == 'B' else False, True if operation == 'K' else False, True if operation == 'M' else False, True if operation == 'M' else False, True if operation == 'W' else False, True if operation == 'U' else False
+        parameters = full_executor[1:]
+        if len(parameters) == 1:
+            tag = parameters[0]
+            if whitelist and author.guild_permissions.moderate_members: pass # command = f'whitelist add {tag}'
+            if unwhitelist and author.guild_permissions.moderate_members: pass # commands = [f'whitelist remove {tag}', f'kick {tag}']
+        if len(parameters) == 2:
+            id = parameters[0]
+            reason = parameters[1]
+            if (len(id) == 18) and id.isdigit():
+                member = await guild.fetch_member(id)
+                if ban and author.guild_permissions.ban_members: await member.ban(reason)
+                if kick and author.guild_permissions.kick_members: await member.kick(reason)
+        if len(parameters[0]) == 3:
+            id = parameters[0]
+            duration = parameters[1]
+            reason = parameters[2]
+            if (len(id) == 18) and id.isdigit():
+                member = await guild.fetch_member(id)
+                if timeout and author.guild_permissions.moderate_members: await member.timeout()
+    ### END UNICODE INVIS ###
+
+    # SMS CHANNEL
+    if ctx.channel.id==1042981935712047214: sendSMS(messageSubject="Forwarded message from Discord", messageBody=f"{ctx.author}:\n{content}")
+    try: messageID=f"{ctx.guild.id}-{ctx.channel.id}-{ctx.id}"
+    except: pass # prob in DM
+    guild=client.get_guild(mainServer)
+    userID = ctx.author.id
+    member = await guild.fetch_member(userID)
+    name = member.name
+    nick = member.nick if member.nick else None
+    disableZBOT = False
+    if (str(ctx.content.lower()).startswith("zbot") or str(ctx.content.lower()).startswith("z-bot") or str(ctx.content.lower()).startswith("hey zbot") or str(ctx.content.lower()).startswith("hey, zbot") or str(ctx.content.lower()).startswith("hey z-bot") or str(ctx.content.lower()).startswith("hey, z-bot") or str(ctx.content.lower()).startswith("*zbot") or str(ctx.content.lower()).startswith("*z-bot") or str(ctx.content.lower()).startswith("*hey zbot") or str(ctx.content.lower()).startswith("*hey, zbot") or str(ctx.content.lower()).startswith("*hey z-bot") or str(ctx.content.lower()).startswith("*hey, z-bot")) and not disableZBOT:
+
+        
+
+        if (await getUserValue(ctx.author, 'chatType') == "THREAD") and not isinstance(ctx.channel, discord.channel.DMChannel):
+            if ctx.guild.id==mainServer:
+                try:
+                    await ctx.create_thread(name=f"Ƶ-Bot thread {datetime.now().strftime('%B')} {datetime.now().strftime('%d')}, {datetime.now().strftime('%Y')}", auto_archive_duration=60)
+                    recordAIChat(ctx.content, ctx, member)
+                    thread = ctx.thread
+                except: pass
+                if ((await getRemaining(ctx.author))[0] - getTokens(message) <= 0):
+                    await thread.send(f'{ctx.author.mention} you don\'t have enough credits for that!\nCredits remaining: {(await getRemaining(ctx.author))[0]*0.75}\nCredits needed: {getTokens(message)*0.75}')
+                    return None
+                member = await guild.fetch_member(ctx.author.id)
+                if t1 in member.roles: limit = 400
+                elif t2 in member.roles: limit = 1000
+                elif t3 in member.roles: limit = None
+                elif infinite in ctx.author.roles: limit = None
+                else: limit = None
+                await subtract_from_user(ctx.author, 'tokens_remaining', getTokens(message[0:limit if limit else len(message)]))
+                def check(m):return m.content is not None and m.channel.id == thread.id
+                convo = [{"content": "You are a helpful AI discord chatbot. To be more realistic and friendly, when someone asks you how you are, do not say you cannot feel emotion, but rather tell them you are doing good or great or another synonym for those words. If someone asks what you are, tell them what you are. You were first deployed on the 4th of march, 2023, so in a scence, that is when you were born.You work for a company called ZMP. ZMP is an achronym for \"Zoe's Multi-player\". The ZMP is a Discord community that has {} members, as of the current date and year, which is {} {}, {}. It is {}:{} {}, PST. This community has existed since July 31st, 2021. Your name is Ƶ-Bot.{}You will be interacting with various people in the ZMP discord community. The community has a minecraft server, which is avaliable to Bedrock edition players, console players, and PC/Java players. The bedrock/console minecraft server ip address is bedrock.zmp.lol. the java/pc minecraft server ip is play.zmp.lol. All ZMP Minecraft servers are on version 1.19.3. The ZMP community is owned by Zoe. You were created by Zoe. For every user that introduces themself to you, there is a chance that you have already talked to them before, but there is the chance that you have not. To be safe, do not greet people as if it is the first time you've met, but do not automatically assume you have already spoken, as you do not know if you have or haven't talked to them at all. Only say something along the lines of \"It's nice to here from you.\" or something similar, that doesnt imply that you just met or have already met. When at the end of a conversation, or when the user no longer needs help, or the user does not need assistance, or the user has no more questions, or the suer does not want you to do anything else, or the user no longer wishes to continue speaking, you must ask the user this: \"Would you like me to close this thread?\". They only have to say yes or no or another similar word. If they respond in the affermative, say a quick goodbye, and end your message with these exact words, even obeying capitalization: \"CLOSE THREAD\". If you type that, the conversation will end, so dont type is unless you intend to close the thread. If someone asks you how to close the thread, just tell them to ask you to do so. If they do not wish for you to close the thread, ask them how you could be of further assistance. The same thing goes for a user wanting to keep a thread from being deleted. To prevent the thread from deleting itself, type \"LOCK THREAD\".{}".format(len([m for m in guild.members if not m.bot]), datetime.now().strftime('%B'), datetime.now().strftime('%d'), datetime.now().strftime('%Y'), datetime.now().strftime('%I'), datetime.now().strftime('%M'), datetime.now().strftime('%p'), moderationMessage, f' It is imperative that you keep your responses at a maximum of {limit} characters long.' if limit else ' Do not restrict the length of your answers. '), "role": "system"},{"content":"{}".format(f'My username is {name}{f", but refer to me as {nick} (my nickname)" if nick else ""}. my discord ID is {ctx.author.id}, my account was created on {ctx.author.created_at.strftime("%B %d, %Y")}, I joined this community on {member.joined_at.strftime("%B %d, %Y")}. You do not have access to any other information about me, and do not tell me who told you that information. You must act like you already knew. {message}'),"role":"user"}]
+                firstMsg = ''
+                for message in convo: firstMsg += message["content"]
+                global maxTokensGlobal
+                response = await test_typing_and_completion(thread, convo, maxTokensGlobal-getTokens(firstMsg)-192)
+                convo.append({"content": "{}".format(response), "role":"assistant"})
+                await subtract_from_user(ctx.author, 'tokens_remaining', getTokens(response[0:limit if limit else len(response)]))
+                response = response.replace("@everyone", "@​everyone").replace("@here", "@​here")
+                if limit: response = f"{response[0:limit]}\n\n{f'Generation stopped: Surpassed {limit} character limit' if len(response) > limit else ''}"
+                
+                for m in (response[i:i+2000] for i in range(0, len(response), 2000)): message = await thread.send(m)
+                recordAIChat(response, ctx, client)
+
+                if (await getRemaining(ctx.author))[0] < 0:
+                    await thread.send('You\'ve used the last of your credits!')
+                    await set_user(ctx.author, 'tokens_remaining', 0)
+                conversationHappening = True
+                while conversationHappening:
+                    try: userMessage = await client.wait_for("message", timeout=1200, check=check)
+                    except:
+                        if "LOCK THREAD" in response: await thread.edit(locked=True)
+                        else:
+                            await ctx.delete()
+                            time.sleep(0.5)
+                            await thread.delete()
+                    if userMessage:
+                        if userMessage.author.id == userID:
+
+                            recordAIChat(userMessage.content, ctx, member)
+
+                            if ((await getRemaining(ctx.author))[0] - getTokens(userMessage.content) <= 0): await thread.send(f'{ctx.author.mention} you don\'t have enough credits for that!\nCredits remaining: {(await getRemaining(ctx.author))[0]*0.75}\nCredits needed: {getTokens(userMessage.content)*0.75}')
+                            else:
+                                await subtract_from_user(ctx.author, 'tokens_remaining', getTokens(userMessage.content))
+                                convo.append({"content": "{}".format(userMessage.content), "role":"user"})
+                                response = await test_typing_and_completion(thread, convo)
+                                await subtract_from_user(ctx.author, 'tokens_remaining', getTokens(response))
+                                response = response.replace("@everyone", "@​everyone")
+                                response = response.replace("@here", "@​here")
+                                convo.append({"content": "{}".format(response), "role":"assistant"})
+                                if limit: response = f"{response[0:limit]}\n\n{f'Generation stopped: Surpassed {limit} character limit' if len(response) > limit else ''}"
+
+                                for m in (response[i:i+2000] for i in range(0, len(response), 2000)): message = await thread.send(m)
+                                recordAIChat(response, ctx, client)
+
+                                if (await getRemaining(ctx.author))[0] < 0:
+                                    await thread.send('You\'ve used the last of your credits!')
+                                    await set_user(ctx.author, 'tokens_remaining', 0)
+                                if "CLOSE THREAD" in response:
+                                    await thread.edit(name="CLOSING THREAD", archived=True, locked=True)
+                                    time.sleep(10)
+                                    await ctx.delete()
+                                    time.sleep(0.5)
+                                    await thread.delete()
+        else: 
+            def check(m):
+                if (m.content is not None and m.reference is not None) and (m.reference.message_id == lastMessage): return True
+                return False
+            if not check(ctx): recordAIChat(ctx.content, ctx, member)
+            if ((await getRemaining(ctx.author))[0] - getTokens(message) <= 0):
+                await ctx.reply(f'{ctx.author.mention} you don\'t have enough credits for that!\nCredits remaining: {(await getRemaining(ctx.author))[0]*0.75}\nCredits needed: {getTokens(message)*0.75}', mention_author = False)
+                return None
+            if t1 in member.roles: limit = 400
+            elif t2 in member.roles: limit = 1000
+            elif t3 in member.roles: limit = None
+            elif infinite in member.roles: limit = None
+            else: limit = None
+            await subtract_from_user(ctx.author, 'tokens_remaining', getTokens(message[0:limit if limit else len(message)]))
+            convo = [{"content": "You are a helpful AI discord chatbot. To be more realistic and friendly, when someone asks you how you are, do not say you cannot feel emotion, but rather tell them you are doing good or great or another synonym for those words. If someone asks what you are, tell them what you are. You were first deployed on the 4th of march, 2023, so in a scence, that is when you were born.You work for a company called ZMP. ZMP is an achronym for \"Zoe's Multi-player\". The ZMP is a Discord community that has {} members, as of the current date and year, which is {} {}, {}. It is {}:{} {}, PST. This community has existed since July 31st, 2021. Your name is Ƶ-Bot.{}You will be interacting with various people in the ZMP discord community. The community has a minecraft server, which is avaliable to Bedrock edition players, console players, and PC/Java players. The bedrock/console minecraft server ip address is bedrock.zmp.lol. the java/pc minecraft server ip is play.zmp.lol. All ZMP Minecraft servers are on version 1.19.3. The ZMP community is owned by Zoe. You were created by Zoe. For every user that introduces themself to you, there is a chance that you have already talked to them before, but there is the chance that you have not. To be safe, do not greet people as if it is the first time you've met, but do not automatically assume you have already spoken, as you do not know if you have or haven't talked to them at all. Only say something along the lines of \"It's nice to here from you.\" or something similar, that doesnt imply that you just met or have already met.{}".format(len([m for m in guild.members if not m.bot]), datetime.now().strftime('%B'), datetime.now().strftime('%d'), datetime.now().strftime('%Y'), datetime.now().strftime('%I'), datetime.now().strftime('%M'), datetime.now().strftime('%p'), moderationMessage, f' It is imperative that you keep your responses at a maximum of {limit} characters long.' if limit else ' Do not restrict the length of your answers. '), "role": "system"},{"content":"{}".format(f'My username is {name}{f", but refer to me as {nick} (my nickname)" if nick else ""}. my discord ID is {ctx.author.id}, my account was created on {ctx.author.created_at.strftime("%B %d, %Y")}, I joined this community on {member.joined_at.strftime("%B %d, %Y")}. You do not have access to any other information about me, and do not tell me who told you that information. You must act like you already knew. Lets begin again: {message}'),"role":"user"}]
+            firstMsg = ''
+            for message in convo: firstMsg += message["content"]
+            response = await test_typing_and_completion(ctx.channel, convo)
+            convo.append({"content": "{}".format(response), "role":"assistant"})
+            await subtract_from_user(ctx.author, 'tokens_remaining', getTokens(response[0:limit if limit else len(response)]))
+            response = response.replace("@everyone", "@​everyone").replace("@here", "@​here")
+            if limit: response = f"{response[0:limit]}\n\n{f'Generation stopped: Surpassed {limit} character limit' if len(response) > limit else ''}"
+
+            for m in (response[i:i+2000] for i in range(0, len(response), 2000)): message = await ctx.reply(m, mention_author = False)
+            recordAIChat(response, ctx, client)
+            lastMessage = message.id
+
+            if (await getRemaining(ctx.author))[0] < 0:
+                await ctx.reply('You\'ve used the last of your credits!', mention_author = False)
+                await set_user(ctx.author, 'tokens_remaining', 0)
+            conversationHappening = True
+            while conversationHappening:
+                userMessage = await client.wait_for("message", check=check, timeout=None)
+                if userMessage:
+                    if userMessage.author.id == userID:
+                        recordAIChat(userMessage.content, ctx, member)
+                        if ((await getRemaining(ctx.author))[0] - getTokens(userMessage.content) <= 0): await ctx.reply(f'{ctx.author.mention} you don\'t have enough credits for that!\nCredits remaining: {(await getRemaining(ctx.author))[0]*0.75}\nCredits needed: {getTokens(userMessage.content)*0.75}', mention_author = False)
+                        else:
+                            await subtract_from_user(ctx.author, 'tokens_remaining', getTokens(userMessage.content))
+                            convo.append({"content": "{}".format(userMessage.content), "role":"user"})
+                            response = await test_typing_and_completion(ctx.channel, convo)
+                            await subtract_from_user(ctx.author, 'tokens_remaining', getTokens(response))
+                            response = response.replace("@everyone", "@​everyone")
+                            response = response.replace("@here", "@​here")
+                            convo.append({"content": "{}".format(response), "role":"assistant"})
+                            if limit: response = f"{response[0:limit]}\n\n{f'Generation stopped: Surpassed {limit} character limit' if len(response) > limit else ''}"
+                            
+                            for m in (response[i:i+2000] for i in range(0, len(response), 2000)): message = await ctx.reply(m, mention_author = False)                
+                            recordAIChat(response, ctx, client)
+                            lastMessage = message.id
+
+                            if (await getRemaining(ctx.author))[0] < 0:
+                                await ctx.reply('You\'ve used the last of your credits!', mention_author = False)
+                                await set_user(ctx.author, 'tokens_remaining', 0)
+
     if ctx.guild.id != smpServer:
         if ctx.channel.id==zmpServerChannel:
             smpGuild=client.get_guild(smpServer)
@@ -224,15 +765,13 @@ async def on_message(ctx):
                                 if ctx.author.id==987755796563628052:
                                     if content=="":
                                         embeds=ctx.embeds
-                                        for embed in embeds:
-                                            await channel.send(embed=embed)
-                                    else:
-                                        await channel.send(f"**[{ctx.author} | ZMP]** {content}")
+                                        for embed in embeds: await channel.send(embed=embed)
+                                    else: await channel.send(f"**[{ctx.author} | ZMP]** {content}")
                                 else:
                                     await channel.send(f"**[{ctx.author} | ZMP Discord]** {content}")
                                     for attachment in ctx.attachments:
                                         await channel.send(attachment)
-    if ctx.guild.id==smpServer:
+    if ctx.guild.id == smpServer:
         if ctx.channel.id==smpServerChannel:
             zmpGuild=client.get_guild(mainServer)
             for channel in zmpGuild.channels:
@@ -250,87 +789,62 @@ async def on_message(ctx):
             if "~Zoe" not in ctx.content and ctx.guild:
                 if "[Discord |" not in ctx.content and ctx.guild:
                     if ctx.author.id != 968356025461768192:
-                        print(ctx.author.id)
-                        if chatLoggerSignature not in content:
-                            await client.get_user(968356025461768192).send(f"Mentioned in {ctx.channel} by {ctx.author.mention}\n\"{ctx.content}\"\nhttps://discordapp.com/channels/{ctx.guild.id}/{ctx.channel.id}/{ctx.id}\nㅤ")
-    if ctx.guild.id==mainServer:
+                        if not ctx.author.bot:
+                            if chatLoggerSignature not in content:
+                                await client.get_user(968356025461768192).send(f"Mentioned in {ctx.channel} by {ctx.author.mention}\n\"{ctx.content}\"\nhttps://discordapp.com/channels/{ctx.guild.id}/{ctx.channel.id}/{ctx.id}\nㅤ")
+    if ctx.guild.id == mainServer:
+        guild=client.get_guild(loggerServer)
         for channel in guild.channels:
             toChannel=discord.utils.get(client.get_all_channels(), id=channel.id)
+            embeds = ctx.embeds
+            filesRaw = ctx.attachments
+            files = []
+            for count, file in enumerate(filesRaw):
+                fp = f"tmp/{count}_{file.url.split('/')[-1]}"
+                await file.save(fp=fp)
+                files.append(fp)
             if f"{fromChannel}"==f"{toChannel}":
                 channel=client.get_channel(channel.id)
-                if content=="":
-                    embeds=ctx.embeds
-                    for embed in embeds:
-                        await channel.send(embed=embed)
-                else:
-                    if chatLoggerSignature in content:
-                        if not ctx.author.bot:
-                            loggerMessage=await channel.send(f"**[{author}]** -- {messageID}\n{content}")
-                            for attachment in ctx.attachments:
-                                await channel.send(attachment)
-                            loggerMessageID=f"{loggerMessage.guild.id}-{loggerMessage.channel.id}-{loggerMessage.id}"
-                            savedLog=f"M.{messageID}.L.{loggerMessageID}, "
-                            f=open("LOGGER.txt", "a")
-                            f.write(f"{savedLog}")
-                            f.close()
-                    else:
-                        loggerMessage=await channel.send(f"**[{author}]** -- {messageID}\n{content}")
-                        for attachment in ctx.attachments:
-                            await channel.send(attachment)
+                if chatLoggerSignature not in content:
+                    loggerMessage=await channel.send(f"**[{author}]** -- {messageID}\n{content}".replace('@', '@​'), files=[discord.File(file) for file in files], embeds=[embed for embed in embeds])
+                    loggerMessageID=f"{loggerMessage.guild.id}-{loggerMessage.channel.id}-{loggerMessage.id}"
+                    savedLog=f"M.{messageID}.L.{loggerMessageID}, "
+                    f=open("LOGGER.txt", "a")
+                    f.write(f"{savedLog}")
+                    f.close()
+            for fp in files: os.remove(fp)
+    elif ctx.guild.id == loggerServer:
+        if ctx.author.id != 991054210730692738:
+            guild=client.get_guild(mainServer)
+            for channel in guild.channels:
+                toChannel=discord.utils.get(client.get_all_channels(), id=channel.id)
+                embeds = ctx.embeds
+                filesRaw = ctx.attachments
+                files = []
+                for count, file in enumerate(filesRaw):
+                    fp = f"tmp/{count}_{file.url.split('/')[-1]}"
+                    await file.save(fp=fp)
+                    files.append(fp)
+                if f"{fromChannel}"==f"{toChannel}":
+                    channel=client.get_channel(channel.id)
+                    if chatLoggerSignature not in content:
+                        loggerMessage=await channel.send(f"{chatLoggerSignature}{content}".replace('@', '@​'), files=[discord.File(file) for file in files], embeds=[embed for embed in embeds])
                         loggerMessageID=f"{loggerMessage.guild.id}-{loggerMessage.channel.id}-{loggerMessage.id}"
                         savedLog=f"M.{messageID}.L.{loggerMessageID}, "
                         f=open("LOGGER.txt", "a")
                         f.write(f"{savedLog}")
                         f.close()
-    if not ctx.author.bot:
-        guild=client.get_guild(mainServer)
-        if ctx.guild.id==loggerServer:
-            for channel in guild.channels:
-                toChannel=discord.utils.get(client.get_all_channels(), id=channel.id)
-                if f"{fromChannel}"==f"{toChannel}":
-                    channel=client.get_channel(channel.id)
-                    if content=="":
-                        embeds=ctx.embeds
-                        for embed in embeds:
-                            await channel.send(embed=embed)
-                    else:
-                        await channel.send(f"{chatLoggerSignature}{content}")
+                for file in files: os.remove(file)
+
     await client.process_commands(ctx)
 
 @client.event
 async def on_message_delete(ctx):
-    messageID=f"{ctx.guild.id}-{ctx.channel.id}-{ctx.id}"
     loggerServer=1035798849551351818
-    content=ctx.content
-    f=open("LOGGER.txt")
-    contents=f.read()
-    author=ctx.author
-    fromChannel=ctx.channel
-    loggerArray=contents.split(", ")
-    for i in loggerArray:
-        if messageID in i:
-            guild=client.get_guild(loggerServer)
-            for channel in guild.channels:
-                toChannel=discord.utils.get(client.get_all_channels(), id=channel.id)
-                if f"{fromChannel}"==f"{toChannel}":
-                    channel=client.get_channel(channel.id)
-                    channel=client.get_channel(channel.id)
-                    before, sep, id=i.partition(".L.")
-                    guildID, sep, channelID_messageID=id.partition("-")
-                    channelID, sep, messageID=channelID_messageID.partition("-")
-                    msg=await channel.fetch_message(messageID)
-                    now=datetime.now()
-                    dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-                    content=msg.content
-                    before, sep, content=content.partition("\n")
-                    await msg.edit(content=f"**[{author}]** -- **DELETED MESSAGE** -- {dateTime}\n{content}")
-    f.close()
-
-@client.event
-async def on_message_edit(ctx, after):
-    loggerServer=1035798849551351818
-    if ctx.guild.id != loggerServer:
+    mainServer=870964644523692053
+    if ctx.guild.id == mainServer:
         messageID=f"{ctx.guild.id}-{ctx.channel.id}-{ctx.id}"
+        loggerServer=1035798849551351818
         content=ctx.content
         f=open("LOGGER.txt")
         contents=f.read()
@@ -344,7 +858,6 @@ async def on_message_edit(ctx, after):
                     toChannel=discord.utils.get(client.get_all_channels(), id=channel.id)
                     if f"{fromChannel}"==f"{toChannel}":
                         channel=client.get_channel(channel.id)
-                        channel=client.get_channel(channel.id)
                         before, sep, id=i.partition(".L.")
                         guildID, sep, channelID_messageID=id.partition("-")
                         channelID, sep, messageID=channelID_messageID.partition("-")
@@ -353,18 +866,121 @@ async def on_message_edit(ctx, after):
                         dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
                         content=msg.content
                         before, sep, content=content.partition("\n")
-                        editedTo=after.content
-                        messageID=f"{ctx.guild.id}-{ctx.channel.id}-{ctx.id}"
-                        if (f"{toChannel}" != "⚡︱console"):
-                            if (f"{toChannel}" != "⚡︱modded-console"):
-                                if (f"{toChannel}" != "⚡︱build-console"):
-                                    await msg.edit(content=f"**[{author}]** -- {messageID} -- **EDITED MESSAGE**\n~~{content}~~\n{editedTo}  `EDIT MADE AT:  {dateTime}`")
-                                else:
-                                    await msg.edit(content=f"{editedTo}")
-                            else:
-                                await msg.edit(content=f"{editedTo}")
-                        else:
-                            await msg.edit(content=f"{editedTo}")
+                        await msg.edit(content=f"**[{author}]** -- **DELETED MESSAGE** -- {dateTime}\n{content}".replace('@', '@​'))
+        f.close()
+    else:
+        messageID=f"{ctx.guild.id}-{ctx.channel.id}-{ctx.id}"
+        mainServer=870964644523692053
+        content=ctx.content
+        f=open("LOGGER.txt")
+        contents=f.read()
+        author=ctx.author
+        fromChannel=ctx.channel
+        loggerArray=contents.split(", ")
+        for i in loggerArray:
+            if messageID in i:
+                guild=client.get_guild(mainServer)
+                for channel in guild.channels:
+                    toChannel=discord.utils.get(client.get_all_channels(), id=channel.id)
+                    if f"{fromChannel}"==f"{toChannel}":
+                        channel=client.get_channel(channel.id)
+                        before, sep, id=i.partition(".L.")
+                        guildID, sep, channelID_messageID=id.partition("-")
+                        channelID, sep, messageID=channelID_messageID.partition("-")
+                        msg=await channel.fetch_message(messageID)
+                        await msg.delete()
+        f.close()
+
+@client.event
+async def on_message_edit(before, after):
+    loggerServer=1035798849551351818
+    mainServer=870964644523692053
+    if after.guild.id == mainServer:
+        messageID=f"{after.guild.id}-{after.channel.id}-{after.id}"
+        content=after.content
+        f=open("LOGGER.txt")
+        contents=f.read()
+        author=after.author
+        fromChannel=after.channel
+        loggerArray=contents.split(", ")
+        for i in loggerArray:
+            if messageID in i:
+                guild=client.get_guild(loggerServer)
+                for channel in guild.channels:
+                    toChannel=discord.utils.get(client.get_all_channels(), id=channel.id)
+                    if f"{fromChannel}"==f"{toChannel}":
+                        channel=client.get_channel(channel.id)
+                        channel=client.get_channel(channel.id)
+                        _, _, id=i.partition(".L.")
+                        _, _, channelID_messageID=id.partition("-")
+                        _, _, messageID=channelID_messageID.partition("-")
+                        msg=await channel.fetch_message(messageID)
+                        now=datetime.now()
+                        dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
+                        content=msg.content
+                        _, _, content=content.partition("\n")
+                        editedTo = after.content
+                        afterFiles = after.attachments
+                        beforeFiles = before.attachments
+                        files = []
+                        for count, file in enumerate(afterFiles):
+                            fp = f"tmp/A{count}_{file.url.split('/')[-1]}"
+                            await file.save(fp=fp)
+                            files.append(fp)
+                        for count, file in enumerate(beforeFiles):
+                            fp = f"tmp/B{count}_{file.url.split('/')[-1]}"
+                            await file.save(fp=fp)
+                            files.append(fp)
+                        messageID=f"{after.guild.id}-{after.channel.id}-{after.id}"
+                        if (f"{toChannel}" == "⚡︱console"): await msg.edit(content=f"{editedTo}".replace('@', '@​'))
+                        elif (f"{toChannel}" == "⚡︱modded-console"): await msg.edit(content=f"{editedTo}".replace('@', '@​'))
+                        elif (f"{toChannel}" == "⚡︱build-console"): await msg.edit(content=f"{editedTo}".replace('@', '@​'))
+                        else: await msg.edit(content=f"**[{author}]** -- {messageID} -- **EDITED MESSAGE**\n~~{content}~~\n{editedTo}  `EDIT MADE AT:  {dateTime}`".replace('@', '@​'), files=[discord.File(file) for file in files])
+                        for file in files: os.remove(file)
+
+        f.close()
+
+    elif after.guild.id == loggerServer:
+        messageID=f"{after.guild.id}-{after.channel.id}-{after.id}"
+        content=after.content
+        f=open("LOGGER.txt")
+        contents=f.read()
+        author=after.author
+        fromChannel=after.channel
+        loggerArray=contents.split(", ")
+        for i in loggerArray:
+            if messageID in i:
+                guild=client.get_guild(mainServer)
+                for channel in guild.channels:
+                    toChannel=discord.utils.get(client.get_all_channels(), id=channel.id)
+                    if f"{fromChannel}"==f"{toChannel}":
+                        channel=client.get_channel(channel.id)
+                        channel=client.get_channel(channel.id)
+                        _, _, id=i.partition(".L.")
+                        _, _, channelID_messageID=id.partition("-")
+                        _, _, messageID=channelID_messageID.partition("-")
+                        try:
+                            msg=await channel.fetch_message(messageID)
+                            now=datetime.now()
+                            dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
+                            content=msg.content
+                            _, _, content=content.partition("\n")
+                            editedTo = after.content
+                            afterFiles = after.attachments
+                            beforeFiles = before.attachments
+                            files = []
+                            for count, file in enumerate(afterFiles):
+                                fp = f"tmp/A{count}_{file.url.split('/')[-1]}"
+                                await file.save(fp=fp)
+                                files.append(fp)
+                            for count, file in enumerate(beforeFiles):
+                                fp = f"tmp/B{count}_{file.url.split('/')[-1]}"
+                                await file.save(fp=fp)
+                                files.append(fp)
+                            messageID=f"{after.guild.id}-{after.channel.id}-{after.id}"
+                            await msg.edit(content=editedTo, files=[discord.File(file) for file in files])
+                            for file in files: os.remove(file)
+                        except: pass
         f.close()
 
 @client.event
@@ -394,14 +1010,32 @@ async def on_guild_channel_update(before, after):
 
 @client.event
 async def on_member_join(member):
-    channel=client.get_channel(id=870965737613828136)
-    await channel.send(f"Welcome to the ZMP, {member.mention}!")
-    channel=client.get_channel(id=870977081717170206)
+    guild = client.get_guild(870964644523692053)
+    mc = guild.member_count
+    
+    channel = client.get_channel(870977081717170206)
     await channel.send(f"{member.mention} joined")
-    role=discord.utils.get(client.guild.roles, id=1005258287442309224)
-    member.add_roles(role)
+    role=discord.utils.get(guild.roles, id=1005258287442309224)
+    await member.add_roles(role)
+    role=discord.utils.get(guild.roles, id=1092817677023723610)
+    await member.add_roles(role)
+    role=discord.utils.get(guild.roles, id=1092816361702572173)
+    await member.add_roles(role)
+    role=discord.utils.get(guild.roles, id=1092810744136998922)
+    await member.add_roles(role)
+    role=discord.utils.get(guild.roles, id=1092818482447536138)
+    await member.add_roles(role)
+    role=discord.utils.get(guild.roles, id=1092819559859376278)
+    await member.add_roles(role)
     print(f"{member} joined")
-    #not found
+    channel = client.get_channel(870965737613828136)
+    convo = [{"content": "You are a helpful AI discord chatbot. You work for a company called ZMP. ZMP is an achronym for \"Zoe's Multi-player\". The ZMP is a Discord community that currently has {} members, as of the current date and year, which is {} {}, {}. It is {}:{} {}, PST. This community has existed since July 31st, 2021. Your name is Ƶ-Bot. The community has a minecraft server, which is avaliable to both Bedrock and Java players, and their respective platforms. The bedrock minecraft server ip address is bedrock.zmp.lol. the java minecraft server ip is play.zmp.lol. All ZMP Minecraft servers are on version 1.19.3. The ZMP community is owned by Zoe. You were created by Zoe. A new member by the name of {} has just joined. Welcome them, inform them that this message you generate is not one that is sent every time a new user joins, and that instead, you made the message for them personally. tell them your name, who and what you are, about this server, and what they can do here. Be polite, and tell them that if they want to talk to you, they must summon you by typing \"hey zbot\", or just \"zbot\"".format(mc, datetime.now().strftime('%B'), datetime.now().strftime('%d'), datetime.now().strftime('%Y'), datetime.now().strftime('%I'), datetime.now().strftime('%M'), datetime.now().strftime('%p'), member.name), "role": "system"}]
+    out = await test_typing_and_completion(channel, convo)
+    for m in (out[i:i+2000] for i in range(0, len(out), 2000)):await channel.send(m)
+    channel = client.get_channel(1094300167454343268)
+    convo = [{"content": "{} has just become the {}{} member of the Zoe's Haven discord community. Make a logical, funny, clever, daring, smart-alec joke about them joining - one that someone just might be able to consider close to an insult.".format(member.mention, mc, 'st' if str(mc).endswith('1') else 'nd' if str(mc).endswith('2') else 'rd' if str(mc).endswith('3') else 'th'), "role": "system"}]
+    out = await test_typing_and_completion(channel, convo)
+    await channel.send(out)
     f=open("LOOKUP.txt")
     contents=f.read().lower()
     contents=contents.split(", ")
@@ -429,12 +1063,13 @@ async def on_member_join(member):
 
 @client.event
 async def on_member_remove(member):
-    channel=client.get_channel(id=870977081717170206)
+    channel=client.get_channel(870977081717170206)
     await channel.send(f"{member.mention} left")
     print(f"{member} left")
     f=open("LOOKUP.txt")
     contents=f.read().lower()
     contents=contents.split(", ")
+    rawData = 0
     for i in contents:
         if member.id in i:
             found=True
@@ -442,16 +1077,166 @@ async def on_member_remove(member):
             rawData=i
         else:
             notFound=True
-    if notFound==True:
-        if found==False:
+    if notFound:
+        if not found:
             print(f"{member} was never whitelisted, and therefore could not be unwhitelisted.")
-    if found==True:
+    if found:
         console=client.get_channel(950858523846271007)
         before, sep, user=rawData.partition(".u")
         await console.send(f"whitelist remove {user}")
     f.close()
 
 ### DISCORD ###
+
+suggestion = "Please enhance this prompt by providing additional details, making it more specific or descriptive, or adding any relevant context that might be missing."
+user_prompt = "Can you generate a picture of a red car?"
+enhanced_prompt = suggestion + " Here's the original prompt: " + user_prompt
+
+@client.slash_command(name='image-variations', description='Create AI-generated images with Ƶ-Bot')
+@option('file', discord.Attachment, description='Reference image', required=True)
+@option('resolution', description='Image resolution', required=True, choices=['1024x1024', '512x512', '256x256'])
+@option('count', int, description='Number of images to generate', required=False, min_value=1, max_value=10, default=4)
+async def generate(ctx: discord.ApplicationContext, file: discord.Attachment, resolution, count):
+    if resolution == '1024x1024':
+        if (await getRemaining(ctx.author))[1] < (count * 80):
+            await ctx.response.send_message(f"Oh no! You don't have enough image credits left!\nCredits: {(await getRemaining(ctx.author))[1]}\nRequired for {count} generation{'s' if count >= 2 else ''}: {count * 80} (80 x {count})", ephemeral=True)
+            return None
+        else: await subtract_from_user(ctx.author, 'image_allowance', 80 * count)
+    elif resolution == '512x512':
+        if (await getRemaining(ctx.author))[1] < (count * 72):
+            await ctx.response.send_message(f"Oh no! You don't have enough image credits left!\nCredits: {(await getRemaining(ctx.author))[1]}\nRequired for {count} generation{'s' if count >= 2 else ''}: {count * 72} (72 x {count})", ephemeral=True)
+            return None
+        else: await subtract_from_user(ctx.author, 'image_allowance', 72 * count)
+    elif resolution == '256x256':
+        if (await getRemaining(ctx.author))[1] < (count * 64):
+            await ctx.response.send_message(f"Oh no! You don't have enough image credits left!\nCredits: {(await getRemaining(ctx.author))[1]}\nRequired for {count} generation{'s' if count >= 2 else ''}: {count * 64} (64 x {count})", ephemeral=True)
+            return None
+        else: await subtract_from_user(ctx.author, 'image_allowance', 64 * count)
+    response = await ctx.response.send_message(f"Now generating {count} image variation{'s' if count >= 2 else ''}\nBy: {ctx.author.mention}")
+    generationDate = datetime.now(timezone('US/Pacific')).strftime('%m/%d/%Y, at %I:%M:%S %p')
+    referenceImagePath = f"openai_data/image_cache/{ctx.author.id}_{generationDate.replace('/', '-').replace(', at ', '_').replace(' ', '-').replace(':', '.')}_R.png"
+    await file.save(fp=referenceImagePath)
+    referenceImage = Image.open(fp=referenceImagePath).convert('RGBA')
+    referenceImage.save(referenceImagePath)
+    b64_images = ai.Image.create_variation(image=open(referenceImagePath, 'rb'), n=count, size=resolution, response_format='b64_json')['data']
+    images = []
+    for genNumber, b64_image in enumerate(b64_images):
+        image = f"openai_data/image_cache/{ctx.author.id}_{generationDate.replace('/', '-').replace(', at ', '_').replace(' ', '-').replace(':', '.')}_V_{genNumber + 1}-of-{count}.png"
+        images.append(image)
+        with open(image, mode="wb") as f:
+            f.write(base64.b64decode(b64_image['b64_json']))
+            f.close()
+    fillerImages = [['assets/logo/1024.png', 1024], ['assets/logo/512.png', 512], ['assets/logo/256.png', 256]]
+    def place(newImage: Image.Image, image, x, y):
+        addImage = Image.open(image)
+        newImage.paste(addImage, (x, y))
+        return newImage
+    def tile(images, fillerImage):
+        sizeRef = Image.open(images[0])
+        size = math.ceil((len(images))**0.5)
+        canvas = Image.new('RGBA', (sizeRef.width * size, sizeRef.height * size))
+        for fillerImage in fillerImages:
+            if fillerImage[1] == sizeRef.width:
+                fillerImage = fillerImage[0]
+                break
+        coordinates = [[x * sizeRef.width, y * sizeRef.height] for x in range(size) for y in range(size)]
+        for imageNumber, addImage in enumerate(images): canvas = place(canvas, addImage, coordinates[imageNumber][1], coordinates[imageNumber][0])
+        for i in range((size**2)-(imageNumber+1)):
+            imageNumber += 1
+            canvas = place(canvas, fillerImage, coordinates[imageNumber][1], coordinates[imageNumber][0])
+        return canvas
+    image = f"openai_data/image_cache/{ctx.author.id}_{generationDate.replace('/', '-').replace(', at ', '_').replace(' ', '-').replace(':', '.')}.png"
+    tile(images, fillerImages).save(image)
+    if resolution == '1024x1024':
+        if count == 10:
+            imageResized = Image.open(image)
+            imageResized = imageResized.resize((round(imageResized.size[0]*0.5), round(imageResized.size[1]*0.5)))
+            imageResized.save(image)
+        elif count > 4:
+            imageResized = Image.open(image)
+            imageResized = imageResized.resize((round(imageResized.size[0]*(2/3)), round(imageResized.size[1]*(2/3))))
+            imageResized.save(image)
+    await response.edit_original_response(content=f'Image {count} variation{"s" if count >> 1 else ""} by: {ctx.author.mention}', files=[discord.File(referenceImagePath), discord.File(image)], view=image_buttons(count, images, response) if count >= 2 else None)
+    os.remove(image)
+    os.remove(referenceImagePath)
+    for image in images: os.remove(image)
+    with open(f"openai_data/image_cache/images.json", mode="r+") as f:
+        fileData = json.load(f)
+        newData = {"user": f"{ctx.author.name}#{ctx.author.discriminator}", "date": generationDate, "prompt": "VARIATION", "imageCount": count, "resolution": resolution}
+        fileData["generations"].append(newData)
+        f.seek(0)
+        json.dump(fileData, f, indent=4)
+        f.truncate()
+
+@client.slash_command(name='image-generation', description='Create AI-generated images with Ƶ-Bot')
+@option('prompt', str, description='A prompt for an image', required=True)
+@option('resolution', description='Image resolution', required=True, choices=['1024x1024', '512x512', '256x256'])
+@option('count', int, description='Number of images to generate', required=False, min_value=1, max_value=10, default=1)
+async def generate(ctx: discord.ApplicationContext, prompt, resolution, count):
+    if resolution == '1024x1024':
+        if (await getRemaining(ctx.author))[1] < (count * 80):
+            await ctx.response.send_message(f"Oh no! You don't have enough image credits left!\nCredits: {(await getRemaining(ctx.author))[1]}\nRequired for {count} generation{'s' if count >= 2 else ''}: {count * 80} (80 x {count})", ephemeral=True)
+            return None
+        else: await subtract_from_user(ctx.author, 'image_allowance', 80 * count)
+    elif resolution == '512x512':
+        if (await getRemaining(ctx.author))[1] < (count * 72):
+            await ctx.response.send_message(f"Oh no! You don't have enough image credits left!\nCredits: {(await getRemaining(ctx.author))[1]}\nRequired for {count} generation{'s' if count >= 2 else ''}: {count * 72} (72 x {count})", ephemeral=True)
+            return None
+        else: await subtract_from_user(ctx.author, 'image_allowance', 72 * count)
+    elif resolution == '256x256':
+        if (await getRemaining(ctx.author))[1] < (count * 64):
+            await ctx.response.send_message(f"Oh no! You don't have enough image credits left!\nCredits: {(await getRemaining(ctx.author))[1]}\nRequired for {count} generation{'s' if count >= 2 else ''}: {count * 64} (64 x {count})", ephemeral=True)
+            return None
+        else: await subtract_from_user(ctx.author, 'image_allowance', 64 * count)
+    response = await ctx.response.send_message(f"Now generating {count} image{'s' if count >= 2 else ''}:\n{prompt}\nBy: {ctx.author.mention}")
+    generationDate = datetime.now(timezone('US/Pacific')).strftime('%m/%d/%Y, at %I:%M:%S %p')
+    b64_images = ai.Image.create(prompt=prompt, n=count, size=resolution, response_format='b64_json')['data']
+    images = []
+    for genNumber, b64_image in enumerate(b64_images):
+        image = f"openai_data/image_cache/{ctx.author.id}_{generationDate.replace('/', '-').replace(', at ', '_').replace(' ', '-').replace(':', '.')}_{genNumber + 1}-of-{count}.png"
+        images.append(image)
+        with open(image, mode="wb") as f:
+            f.write(base64.b64decode(b64_image['b64_json']))
+            f.close()
+    fillerImages = [['assets/logo/1024.png', 1024], ['assets/logo/512.png', 512], ['assets/logo/256.png', 256]]
+    def place(newImage: Image.Image, image, x, y):
+        addImage = Image.open(image)
+        newImage.paste(addImage, (x, y))
+        return newImage
+    def tile(images, fillerImage):
+        sizeRef = Image.open(images[0])
+        size = math.ceil((len(images))**0.5)
+        canvas = Image.new('RGBA', (sizeRef.width * size, sizeRef.height * size))
+        for fillerImage in fillerImages:
+            if fillerImage[1] == sizeRef.width:
+                fillerImage = fillerImage[0]
+                break
+        coordinates = [[x * sizeRef.width, y * sizeRef.height] for x in range(size) for y in range(size)]
+        for imageNumber, addImage in enumerate(images): canvas = place(canvas, addImage, coordinates[imageNumber][1], coordinates[imageNumber][0])
+        for i in range((size**2)-(imageNumber+1)):
+            imageNumber += 1
+            canvas = place(canvas, fillerImage, coordinates[imageNumber][1], coordinates[imageNumber][0])
+        return canvas
+    image = f"openai_data/image_cache/{ctx.author.id}_{generationDate.replace('/', '-').replace(', at ', '_').replace(' ', '-').replace(':', '.')}.png"
+    tile(images, fillerImages).save(image)
+    if resolution == '1024x1024':
+        if count == 10:
+            imageResized = Image.open(image)
+            imageResized = imageResized.resize((round(imageResized.size[0]*0.5), round(imageResized.size[1]*0.5)))
+            imageResized.save(image)
+        elif count > 4:
+            imageResized = Image.open(image)
+            imageResized = imageResized.resize((round(imageResized.size[0]*(2/3)), round(imageResized.size[1]*(2/3))))
+            imageResized.save(image)
+    await response.edit_original_response(content=f'{prompt}\n{count} image{"s" if count >> 1 else ""}, by: {ctx.author.mention}', file=discord.File(image), view=image_buttons(count, images, response) if count >= 2 else None)
+    os.remove(image)
+    with open(f"openai_data/image_cache/images.json", mode="r+") as f:
+        fileData = json.load(f)
+        newData = {"user": f"{ctx.author.name}#{ctx.author.discriminator}", "date": generationDate, "prompt": prompt, "imageCount": count, "resolution": resolution}
+        fileData["generations"].append(newData)
+        f.seek(0)
+        json.dump(fileData, f, indent=4)
+        f.truncate()
 
 @client.command()
 @commands.has_any_role("Owner", "Admin")
@@ -463,7 +1248,7 @@ async def reload(ctx):
     await channel.send(embed=emb)
     try:
         answer=(await client.wait_for('message', check=check_rule, timeout=20)).content
-    except (asyncio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
+    except (aio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
         await ctx.send("Took too long to answer. Reload canceled")
         return
     if answer=='yes':
@@ -476,7 +1261,7 @@ async def reload(ctx):
         emb=discord.Embed(color=discord.Color.red(), title="**Reloading**", description=f"Starting new instance...")
         await channel.send(embed=emb)
         path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\bot\\main.py"
-        subprocess.Popen(f"start cmd /k \"python3 {path}\"", shell=True)
+        sub.Popen(f"start cmd /k \"python3 {path}\"", shell=True)
         print("\nBot reloaded")
         await client.close()
         exit()
@@ -530,7 +1315,7 @@ async def suspend(ctx, user: discord.Member=None, revoke=""):
             await ctx.send(f"You cannot suspend that user")
         elif suspendedRole not in user.roles:
             await ctx.send(f"{user} was suspended")
-            f=open(f"{user.display_name}_roles.txt", "w+")
+            f=open(f"{user.id}_roles.txt", "w+")
             userRoles=user.roles
             userArray=""
             for i in userRoles:
@@ -592,7 +1377,7 @@ async def lookup(ctx, user, mode="generic"):
             before, sep, user=rawData.partition(".u")
             userName=await client.fetch_user(userID)
             await console.send(f"seen {user}")
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await console.history(limit=1).flatten())[0].content
             result=result.upper()
             if result=="U/ALRWL":
@@ -622,7 +1407,7 @@ async def lookup(ctx, user, mode="generic"):
                         session, sep, after=session.partition(".")
                         session=f"online for {session}"
                         await console.send(f"coords {user}")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await console.history(limit=1).flatten())[0].content
                         before, sep, world=content.partition("Current World: ")
                         world, sep, after=world.partition("\n")
@@ -642,11 +1427,10 @@ async def lookup(ctx, user, mode="generic"):
 
 @client.command()
 @commands.has_any_role("Owner")
-async def verify(ctx):
-    role=discord.utils.get(ctx.message.guild.roles, id=1005254886142787696)
+async def addroleall(ctx, id):
+    role=discord.utils.get(ctx.message.guild.roles, id=int(id))
     for m in ctx.message.guild.members:
         await m.add_roles(role)
-        print(f"\n\n\nVerified {m}\n\n\n")
 
 @client.command()
 @commands.has_any_role("Owner", "Admin", "Moderator")
@@ -725,7 +1509,7 @@ async def kill(ctx):
     await channel.send(embed=emb)
     try:
         answer=(await client.wait_for('message', check=check_rule, timeout=20)).content
-    except (asyncio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
+    except (aio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
         await ctx.send("Took too long to answer. Termination canceled")
         return
     if answer=='yes':
@@ -760,7 +1544,7 @@ async def membercount(ctx):
 @commands.is_owner()
 async def terminal(ctx, mode, *, command):
     if mode=="window":
-        subprocess.Popen(f"start cmd /k \"{command}\"", shell=True)
+        sub.Popen(f"start cmd /k \"{command}\"", shell=True)
     if mode=="output":
         output=os.popen(f'{command}').read()
         await ctx.send(f"```{output}```")
@@ -822,16 +1606,16 @@ async def co(ctx, *, params):
         before, sep, user=params.lower().partition("purge ")
         command=f"co rollback {user} t:9w r:#global"
     await console.send(command)
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     content=(await console.history(limit=1).flatten())[0].content
     if content.lower().startswith("co"):
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
     if content.lower().startswith("co"):
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
     if content.lower().startswith("co"):
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
     await ctx.send(content)
 
@@ -852,7 +1636,7 @@ async def estop(ctx, server):
     await channel.send(embed=emb)
     try:
         answer=(await client.wait_for('message', check=check_rule, timeout=20)).content
-    except (asyncio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
+    except (aio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
         await ctx.send("Took too long to answer. Termination canceled")
         return
     if answer=='yes':
@@ -892,19 +1676,19 @@ async def status(ctx):
         if result==0:
             await ctx.send("ㅤ\nServer domain response check passed")
             await console.send("ping")
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await console.history(limit=1).flatten())[0].content
             if content != "ping" and "```" in content:
                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
             else:
                 await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await console.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await console.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -934,7 +1718,7 @@ async def start(ctx):
         if result==0:
             await ctx.send("ㅤ\nServer domain response check passed")
             await console.send("ping")
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await console.history(limit=1).flatten())[0].content
             if content != "ping" and "```" in content:
                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -943,7 +1727,7 @@ async def start(ctx):
                 await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
             else:
                 await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await console.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -952,7 +1736,7 @@ async def start(ctx):
                     await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await console.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -982,8 +1766,8 @@ async def start(ctx):
     else:
         await ctx.send("ㅤ\nServer is not open on local host")
         await ctx.send("ㅤ\nStarting server...")
-        path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\public\\1--START.cmd"
-        subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd", shell=True)
+        path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\ZMP.cmd"
+        sub.Popen(f"start cmd /k {path}", shell=True)
         await ctx.send("ㅤ\nServer startup initiated")
         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
         if ctx.author.id != 968356025461768192:
@@ -993,243 +1777,12 @@ async def start(ctx):
             sendSMS(messageSubject="ZMP ALERT", messageBody=f"{date} | {time}\n\nTag: {ctx.author} | ID: {ctx.author.id} | Name: {ctx.author.nick}\n\nUser issued command:\n\"{ctx.message.content}\"")
     sock.close()
 
-'''
-@client.command()
-async def whitelist(ctx, version, *, tag):
-    if ctx.channel.id==989939438824071178:
-        if version.lower()=="java":
-            command=f"whitelist add {tag}"
-        elif version.lower()=="bedrock":
-            bTag=tag.replace(" ", "_")
-            command=f"whitelist add .{bTag}"
-        await asyncio.sleep(2)
-        console=client.get_channel(950858523846271007)
-        await console.send(command)
-        content=(await console.history(limit=1).flatten())[0].content
-        if 'already whitelisted' in content:
-            result="U/ALRWL"
-            if version.lower()=="java":
-                print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  RESOLVED: User is already whitelisted\n----WHITELIST----\n\n")
-            elif version.lower()=="bedrock":
-                print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  RESOLVED: User is already whitelisted\n----WHITELIST----\n\n")
-            await ctx.message.add_reaction("✅")
-            await ctx.message.add_reaction("⚠️")
-            now=datetime.now()
-            dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-            date, sep, time=dateTime.partition(" ")
-            f=open("LOOKUP.txt", "r")
-            contents=f.read()
-            f.close()
-            f=open("LOOKUP.txt", "a")
-            lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-            if lookupLink not in contents:
-                f.write(f"{lookupLink}, ")
-            f.close()
-            member=ctx.message.author
-            role=discord.utils.get(ctx.message.guild.roles, id=1004204386618196089)
-            await member.add_roles(role)
-            await ctx.author.send("**You're already whitelisted!**\n\nIf you are having issues with connecting to the server, ask for help in one of the help channels.")
-        elif 'to the whitelist' in content:
-            result="S"
-            if version.lower()=="java":
-                print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  SUCCESSFUL: User was added to the whitelist\n----WHITELIST----\n\n")
-            elif version.lower()=="bedrock":
-                print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  SUCCESSFUL: User was added to the whitelist\n----WHITELIST----\n\n")
-            await ctx.message.add_reaction("✅")
-            now=datetime.now()
-            dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-            date, sep, time=dateTime.partition(" ")
-            f=open("LOOKUP.txt", "r")
-            contents=f.read()
-            f.close()
-            f=open("LOOKUP.txt", "a")
-            lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-            if lookupLink not in contents:
-                f.write(f"{lookupLink}, ")
-            f.close()
-            member=ctx.message.author
-            role=discord.utils.get(ctx.message.guild.roles, id=1004204386618196089)
-            await member.add_roles(role)
-        elif 'player does not exist' in content:
-            result="U/PDNE"
-            await ctx.author.send("**That didnt work!**\n\nBe sure you entered the right tag, including capitalization!\nIf you are trying to join on bedrock, try to join before trying to whitelist yourself!")
-            await ctx.message.add_reaction("❌")
-            now=datetime.now()
-            dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-            date, sep, time=dateTime.partition(" ")
-            f=open("LOOKUP.txt", "r")
-            contents=f.read()
-            f.close()
-            f=open("LOOKUP.txt", "a")
-            lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-            if lookupLink not in contents:
-                f.write(f"{lookupLink}, ")
-            f.close()
-            if version.lower()=="java":
-                print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
-            elif version.lower()=="bedrock":
-                print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
-        elif 'whitelist add' in content:
-            result="U/ERR"
-            await asyncio.sleep(2)
-            content=(await console.history(limit=1).flatten())[0].content
-            if 'already whitelisted' in content:
-                result="U/ALRWL"
-                if version.lower()=="java":
-                    print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  RESOLVED: User is already whitelisted\n----WHITELIST----\n\n")
-                elif version.lower()=="bedrock":
-                    print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  RESOLVED: User is already whitelisted\n----WHITELIST----\n\n")
-                await ctx.message.add_reaction("✅")
-                await ctx.message.add_reaction("⚠️") 
-                now=datetime.now()
-                dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-                date, sep, time=dateTime.partition(" ")
-                f=open("LOOKUP.txt", "r")
-                contents=f.read()
-                f.close()
-                f=open("LOOKUP.txt", "a")
-                lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-                if lookupLink not in contents:
-                    f.write(f"{lookupLink}, ")
-                f.close()
-                member=ctx.message.author
-                role=discord.utils.get(ctx.message.guild.roles, id=1004204386618196089)
-                await member.add_roles(role)
-                await ctx.author.send("**You're already whitelisted!**\n\nIf you are having issues with connecting to the server, ask for help in one of the help channels.")
-            elif 'to the whitelist' in content:
-                result="S"
-                if version.lower()=="java":
-                    print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  SUCCESSFUL: User was added to the whitelist\n----WHITELIST----\n\n")
-                elif version.lower()=="bedrock":
-                    print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  SUCCESSFUL: User was added to the whitelist\n----WHITELIST----\n\n")
-                await ctx.message.add_reaction("✅")
-                now=datetime.now()
-                dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-                date, sep, time=dateTime.partition(" ")
-                f=open("LOOKUP.txt", "r")
-                contents=f.read()
-                f.close()
-                f=open("LOOKUP.txt", "a")
-                lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-                if lookupLink not in contents:
-                    f.write(f"{lookupLink}, ")
-                f.close()
-                member=ctx.message.author
-                role=discord.utils.get(ctx.message.guild.roles, id=1004204386618196089)
-                await member.add_roles(role)
-            elif 'player does not exist' in content:
-                result="U/PDNE"
-                await ctx.author.send("**That didnt work!**\n\nBe sure you entered the right tag, including capitalization!\nIf you are trying to join on bedrock, try to join before trying to whitelist yourself!")
-                await ctx.message.add_reaction("❌") 
-                now=datetime.now()
-                dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-                date, sep, time=dateTime.partition(" ")
-                f=open("LOOKUP.txt", "r")
-                contents=f.read()
-                f.close()
-                f=open("LOOKUP.txt", "a")
-                lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-                if lookupLink not in contents:
-                    f.write(f"{lookupLink}, ")
-                f.close()
-                if version.lower()=="java":
-                    print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
-                elif version.lower()=="bedrock":
-                    print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
-            elif 'whitelist add' in content:
-                result="U/ERR"
-                await asyncio.sleep(4)
-                content=(await console.history(limit=1).flatten())[0].content
-                if 'already whitelisted' in content:
-                    result="U/ALRWL"
-                    if version.lower()=="java":
-                        print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  RESOLVED: User is already whitelisted\n----WHITELIST----\n\n")
-                    elif version.lower()=="bedrock":
-                        print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  RESOLVED: User is already whitelisted\n----WHITELIST----\n\n")
-                    await ctx.message.add_reaction("✅")
-                    member=ctx.message.author
-                    role=discord.utils.get(ctx.message.guild.roles, id=1004204386618196089)
-                    await member.add_roles(role)
-                    await ctx.message.add_reaction("⚠️")               
-                    now=datetime.now()
-                    dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-                    date, sep, time=dateTime.partition(" ")
-                    f=open("LOOKUP.txt", "r")
-                    contents=f.read()
-                    f.close()
-                    f=open("LOOKUP.txt", "a")
-                    lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-                    if lookupLink not in contents:
-                        f.write(f"{lookupLink}, ")
-                    f.close()
-                    await ctx.author.send("**You're already whitelisted!**\n\nIf you are having issues with connecting to the server, ask for help in one of the help channels.")
-                elif 'to the whitelist' in content:
-                    result="S"
-                    if version.lower()=="java":
-                        print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  SUCCESSFUL: User was added to the whitelist\n----WHITELIST----\n\n")
-                    elif version.lower()=="bedrock":
-                        print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  SUCCESSFUL: User was added to the whitelist\n----WHITELIST----\n\n")
-                    await ctx.message.add_reaction("✅")
-                    now=datetime.now()
-                    dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-                    date, sep, time=dateTime.partition(" ")
-                    f=open("LOOKUP.txt", "r")
-                    contents=f.read()
-                    f.close()
-                    f=open("LOOKUP.txt", "a")
-                    lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-                    if lookupLink not in contents:
-                        f.write(f"{lookupLink}, ")
-                        f.close()
-                    member=ctx.message.author
-                    role=discord.utils.get(ctx.message.guild.roles, id=1004204386618196089)
-                    await member.add_roles(role)
-                elif 'player does not exist' in content:
-                    result="U/PDNE"
-                    await ctx.author.send("**That didnt work!**\n\nBe sure you entered the right tag, including capitalization!\nIf you are trying to join on bedrock, try to join before trying to whitelist yourself!")
-                    await ctx.message.add_reaction("❌")
-                    now=datetime.now()
-                    dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-                    date, sep, time=dateTime.partition(" ")
-                    f=open("LOOKUP.txt", "r")
-                    contents=f.read()
-                    f.close()
-                    f=open("LOOKUP.txt", "a")
-                    lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-                    if lookupLink not in contents:
-                        f.write(f"{lookupLink}, ")
-                        f.close()
-                    if version.lower()=="java":
-                        print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
-                    elif version.lower()=="bedrock":
-                        print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
-                elif 'whitelist add' in content:
-                    result="U/ERR"
-                    await ctx.message.add_reaction("❌")
-                    now=datetime.now()
-                    dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-                    date, sep, time=dateTime.partition(" ")
-                    f=open("LOOKUP.txt", "r")
-                    contents=f.read()
-                    f.close()
-                    f=open("LOOKUP.txt", "a")
-                    lookupLink=f"ID{ctx.author.id}-{ctx.guild.id}-{ctx.channel.id}-{ctx.message.id}.d{date}.t{time}.r{result}.u{tag}"
-                    if lookupLink not in contents:
-                        f.write(f"{lookupLink}, ")
-                        f.close()
-                    await ctx.author.send("Sorry, but you were unable to be whitelisted at this time. Please contact Zoe for further information.")
-                    if version.lower()=="java":
-                        print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {tag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - unknown error\n----WHITELIST----\n\n")
-                    elif version.lower()=="bedrock":
-                        print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - unknown error\n----WHITELIST----\n\n")
-'''
-
 @client.command()
 @commands.has_any_role("Owner", "Admin", "luckperms", "Moderator", "Head Moderator", "Helper", "Staff")
 async def vip(ctx, user):
     console=client.get_channel(950858523846271007)
     await console.send(f"eplaytime {user}")
-    await asyncio.sleep(4)
+    await aio.sleep(4)
     content=(await console.history(limit=1).flatten())[0].content
     if "week" in content:
         await console.send(f"lp user {user} group add superstar")
@@ -1332,7 +1885,7 @@ async def vip(ctx, user):
 async def lockdown(ctx, mode="staff"):
     console=client.get_channel(950858523846271007)
     await console.send("whitelist list")
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     content=(await console.history(limit=1).flatten())[0].content
     a=content.split("There are ",1)[1]
     before, sep, after=a.partition(" whitelisted players: ")
@@ -1356,7 +1909,7 @@ async def lockdown(ctx, mode="staff"):
             sendSMS(messageSubject="ZMP ALERT", messageBody=f"{date} | {time}\n\nTag: {ctx.author} | ID: {ctx.author.id} | Name: {ctx.author.nick}\n\nUser issued command:\n\"{ctx.message.content}\"")
         f=open(f"WLbackup{whitelistCount}.txt", "w+")
         await console.send("whitelist list")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         before, sep, content=content.partition("players: ")
         content, sep, after=content.partition("\n")
@@ -1583,7 +2136,7 @@ async def lockdown(ctx, mode="staff"):
         num=0
         f=open(f"WLbackup{whitelistCount}.txt", "w+")
         await console.send("whitelist list")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         before, sep, content=content.partition("players: ")
         content, sep, after=content.partition("\n")
@@ -1640,14 +2193,13 @@ async def mcban(ctx, tag, *, reason="None given"):
     if found==True:
         before, sep, userID=rawData.partition("id")
         userID, sep, after=userID.partition("-")
-        user=await client.fetch_user(userID)
-
+        user=await guild.fetch_user(userID)
         await ctx.send(f"{tag} was banned from the Minecraft server. Would you like to ban them on Discord?\nUsername: {user}")
         def check_rule(message: discord.Message):
             return message.author.id==ctx.message.author.id
         try:
             answer=(await client.wait_for('message', check=check_rule, timeout=20)).content
-        except (asyncio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
+        except (aio.exceptions.TimeoutError, discord.ext.commands.errors.CommandInvokeError):
             await ctx.send("Took too long to answer. User will not be banned.")
             return
         if answer.lower()=='yes':
@@ -1658,18 +2210,6 @@ async def mcban(ctx, tag, *, reason="None given"):
             await ctx.send("User will not be banned.")
         else:
             await ctx.send("User will not be banned. Invalid input.")
-
-
-
-
-
-
-
-
-
-
-
-
     f.close()
 
 @client.command()
@@ -1694,7 +2234,7 @@ async def lp(ctx, *, params):
     console=client.get_channel(950858523846271007)
     if params.lower().startswith("editor"):
         await console.send("lp editor")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         if "https://luckperms.net/editor/" in content:
             before, sep, editor=content.partition("https://luckperms.net/editor/")
@@ -1705,7 +2245,7 @@ async def lp(ctx, *, params):
             else:
                 await ctx.author.send(editor)
         else:
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await console.history(limit=1).flatten())[0].content
             if "https://luckperms.net/editor/" in content:
                 before, sep, editor=content.partition("https://luckperms.net/editor/")
@@ -1716,7 +2256,7 @@ async def lp(ctx, *, params):
                 else:
                     await ctx.author.send(editor)
             else:
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await console.history(limit=1).flatten())[0].content
                 if "https://luckperms.net/editor/" in content:
                     if "https://luckperms.net/editor/" in content:
@@ -1725,8 +2265,6 @@ async def lp(ctx, *, params):
                         if "```" in editor:
                             editor, sep, after=editor.partition("```")
                         await ctx.author.send(f"https://luckperms.net/editor/{editor}")
-                    else:
-                        await ctx.author.send(editor)
                 else:
                     ctx.author.send("unable to get Luckperms Data")
     elif params.lower().startswith("user "):
@@ -1760,7 +2298,7 @@ async def console(ctx, display, *, cmd):
     channel=client.get_channel(950858523846271007)
     await channel.send(cmd)
     console=client.get_channel(950858523846271007)
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     content=(await console.history(limit=1).flatten())[0].content
     if display=="true":
         await ctx.send(content)
@@ -1790,7 +2328,7 @@ async def server(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await console.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await console.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -1799,7 +2337,7 @@ async def server(ctx, mode, command=""):
                         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await console.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -1808,7 +2346,7 @@ async def server(ctx, mode, command=""):
                             await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await console.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -1838,8 +2376,8 @@ async def server(ctx, mode, command=""):
             else:
                 await ctx.send("ㅤ\nServer is not open on local host")
                 await ctx.send("ㅤ\nStarting server...")
-                path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\public\\1--START.cmd"
-                subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd", shell=True)
+                path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\ZMP.cmd"
+                sub.Popen(f"start cmd /k {path}", shell=True)
                 await ctx.send("ㅤ\nServer startup initiated")
                 await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
             sock.close()
@@ -1861,19 +2399,19 @@ async def server(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await console.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await console.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await console.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await console.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -1891,36 +2429,36 @@ async def server(ctx, mode, command=""):
             os.remove(r"C:\Users\Overdrive\Desktop\MINECRAFT_SERVERS\public\ssOfWindow.png")
         elif command.lower()=="whitelist":
             await console.send("whitelist list")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await console.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("players: ")
             content, sep, after=content.partition("\n")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass
             await ctx.send(f"```{content}```")
         elif command.lower()=="players":
             await console.send("list")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await console.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("/list")
             before, sep, content=content.partition("] ")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass
             await ctx.send(f"```{content}```")
         elif command.lower()=="tps":
             await console.send("tps")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await console.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("] ")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass 
             await ctx.send(f"```{content}```")
@@ -1937,7 +2475,7 @@ async def server(ctx, mode, command=""):
             if result==0:
                 await ctx.send("ㅤ\nServer domain response check passed")
                 await console.send("ping")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await console.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -1946,7 +2484,7 @@ async def server(ctx, mode, command=""):
                     await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await console.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -1955,7 +2493,7 @@ async def server(ctx, mode, command=""):
                         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await console.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -1986,8 +2524,8 @@ async def server(ctx, mode, command=""):
         else:
             await ctx.send("ㅤ\nServer is not open on local host")
             await ctx.send("ㅤ\nStarting server...")
-            path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\public\\1--START.cmd"
-            subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd", shell=True)
+            path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\ZMP.cmd"
+            sub.Popen(f"start cmd /k {path}", shell=True)
             await ctx.send("ㅤ\nServer startup initiated")
             await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
         sock.close()
@@ -2005,19 +2543,19 @@ async def server(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await console.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await console.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await console.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await console.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2050,7 +2588,7 @@ async def buildwhitelist(ctx, version, *, tag):
         command=f"whitelist add .{bTag}"
     channel=discord.utils.get(ctx.author.guild.text_channels, name="⚡︱build-console")
     await channel.send(command)
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     console=client.get_channel(1026654816996446278)
     content=(await console.history(limit=1).flatten())[0].content
     if 'already whitelisted' in content:
@@ -2075,7 +2613,7 @@ async def buildwhitelist(ctx, version, *, tag):
         elif version.lower()=="bedrock":
             print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
     elif 'whitelist add' in content:
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         if 'already whitelisted' in content:
             if version.lower()=="java":
@@ -2099,7 +2637,7 @@ async def buildwhitelist(ctx, version, *, tag):
             elif version.lower()=="bedrock":
                 print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
         elif 'whitelist add' in content:
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await console.history(limit=1).flatten())[0].content
             if 'already whitelisted' in content:
                 if version.lower()=="java":
@@ -2146,19 +2684,19 @@ async def buildstatus(ctx):
         if result==0:
             await ctx.send("ㅤ\nServer domain response check passed")
             await buildconsole.send("ping")
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await buildconsole.history(limit=1).flatten())[0].content
             if content != "ping" and "```" in content:
                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
             else:
                 await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await buildconsole.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await buildconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2190,7 +2728,7 @@ async def buildstart(ctx):
         if result==0:
             await ctx.send("ㅤ\nServer domain response check passed")
             await buildconsole.send("ping")
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await buildconsole.history(limit=1).flatten())[0].content
             if content != "ping" and "```" in content:
                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2199,7 +2737,7 @@ async def buildstart(ctx):
                 await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
             else:
                 await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await buildconsole.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2208,7 +2746,7 @@ async def buildstart(ctx):
                     await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await buildconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2238,8 +2776,8 @@ async def buildstart(ctx):
     else:
         await ctx.send("ㅤ\nServer is not open on local host")
         await ctx.send("ㅤ\nStarting server...")
-        path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\build\\1--START.cmd"
-        subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd")
+        path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\BUILD.cmd"
+        sub.Popen(f"start cmd /k {path}", shell=True)
         await ctx.send("ㅤ\nServer startup initiated")
         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
     sock.close()
@@ -2253,7 +2791,7 @@ async def buildip(ctx):
 async def buildlockdown(ctx, mode="staff"):
     console=client.get_channel(1026654816996446278)
     await console.send("whitelist list")
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     content=(await console.history(limit=1).flatten())[0].content
     a=content.split("There are ",1)[1]
     before, sep, after=a.partition(" whitelisted players: ")
@@ -2277,7 +2815,7 @@ async def buildlockdown(ctx, mode="staff"):
         num=0
         f=open(f"buildWLbackup{whitelistCount}.txt", "w+")
         await console.send("whitelist list")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         before, sep, content=content.partition("players: ")
         content, sep, after=content.partition("\n")
@@ -2504,7 +3042,7 @@ async def buildlockdown(ctx, mode="staff"):
         num=0
         f=open(f"buildWLbackup{whitelistCount}.txt", "w+")
         await console.send("whitelist list")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         before, sep, content=content.partition("players: ")
         content, sep, after=content.partition("\n")
@@ -2566,7 +3104,7 @@ async def buildlp(ctx, *, params):
     buildconsole=client.get_channel(1026654816996446278)
     if params.lower().startswith("editor"):
         await buildconsole.send("lp editor")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await buildconsole.history(limit=1).flatten())[0].content
         if "https://luckperms.net/editor/" in content:
             before, sep, editor=content.partition("https://luckperms.net/editor/")
@@ -2577,7 +3115,7 @@ async def buildlp(ctx, *, params):
             else:
                 await ctx.author.send(editor)
         else:
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await buildconsole.history(limit=1).flatten())[0].content
             if "https://luckperms.net/editor/" in content:
                 before, sep, editor=content.partition("https://luckperms.net/editor/")
@@ -2588,7 +3126,7 @@ async def buildlp(ctx, *, params):
                 else:
                     await ctx.author.send(editor)
             else:
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await buildconsole.history(limit=1).flatten())[0].content
                 if "https://luckperms.net/editor/" in content:
                     if "https://luckperms.net/editor/" in content:
@@ -2597,8 +3135,6 @@ async def buildlp(ctx, *, params):
                         if "```" in editor:
                             editor, sep, after=editor.partition("```")
                         await ctx.author.send(f"https://luckperms.net/editor/{editor}")
-                    else:
-                        await ctx.author.send(editor)
                 else:
                     ctx.author.send("unable to get Luckperms Data")
     elif params.lower().startswith("user "):
@@ -2632,7 +3168,7 @@ async def buildconsole(ctx, display, *, cmd):
     channel=discord.utils.get(ctx.author.guild.text_channels, name="⚡︱build-console")
     await channel.send(cmd)
     console=client.get_channel(1026654816996446278)
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     content=(await console.history(limit=1).flatten())[0].content
     if display=="true":
         await ctx.send(content)
@@ -2662,7 +3198,7 @@ async def buildserver(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await buildconsole.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await buildconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2671,7 +3207,7 @@ async def buildserver(ctx, mode, command=""):
                         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await buildconsole.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2680,7 +3216,7 @@ async def buildserver(ctx, mode, command=""):
                             await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await buildconsole.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2710,8 +3246,8 @@ async def buildserver(ctx, mode, command=""):
             else:
                 await ctx.send("ㅤ\nServer is not open on local host")
                 await ctx.send("ㅤ\nStarting server...")
-                path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\build\\1--START.cmd"
-                subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd")
+                path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\BUILD.cmd"
+                sub.Popen(f"start cmd /k {path}", shell=True)
                 await ctx.send("ㅤ\nServer startup initiated")
                 await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
             sock.close()
@@ -2733,19 +3269,19 @@ async def buildserver(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await buildconsole.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await buildconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await buildconsole.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await buildconsole.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2763,36 +3299,36 @@ async def buildserver(ctx, mode, command=""):
             os.remove(r"C:\Users\Overdrive\Desktop\MINECRAFT_SERVERS\build\ssOfWindow.png")
         elif command.lower()=="whitelist":
             await buildconsole.send("whitelist list")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await buildconsole.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("players: ")
             content, sep, after=content.partition("\n")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass
             await ctx.send(f"```{content}```")
         elif command.lower()=="players":
             await buildconsole.send("list")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await buildconsole.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("/list")
             before, sep, content=content.partition("] ")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass
             await ctx.send(f"```{content}```")
         elif command.lower()=="tps":
             await buildconsole.send("tps")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await buildconsole.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("] ")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass 
             await ctx.send(f"```{content}```")
@@ -2809,7 +3345,7 @@ async def buildserver(ctx, mode, command=""):
             if result==0:
                 await ctx.send("ㅤ\nServer domain response check passed")
                 await buildconsole.send("ping")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await buildconsole.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2818,7 +3354,7 @@ async def buildserver(ctx, mode, command=""):
                     await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await buildconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2827,7 +3363,7 @@ async def buildserver(ctx, mode, command=""):
                         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await buildconsole.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2858,8 +3394,8 @@ async def buildserver(ctx, mode, command=""):
         else:
             await ctx.send("ㅤ\nServer is not open on local host")
             await ctx.send("ㅤ\nStarting server...")
-            path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\build\\1--START.cmd"
-            subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd")
+            path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\BUILD.cmd"
+            sub.Popen(f"start cmd /k {path}", shell=True)
             await ctx.send("ㅤ\nServer startup initiated")
             await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
         sock.close()
@@ -2877,19 +3413,19 @@ async def buildserver(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await buildconsole.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await buildconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await buildconsole.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await buildconsole.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -2922,7 +3458,7 @@ async def mzmpwhitelist(ctx, version, *, tag):
         command=f"whitelist add .{bTag}"
     channel=discord.utils.get(ctx.author.guild.text_channels, name="⚡︱modded-console")
     await channel.send(command)
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     console=client.get_channel(1006963820830404658)
     content=(await console.history(limit=1).flatten())[0].content
     if 'already whitelisted' in content:
@@ -2947,7 +3483,7 @@ async def mzmpwhitelist(ctx, version, *, tag):
         elif version.lower()=="bedrock":
             print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
     elif 'whitelist add' in content:
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         if 'already whitelisted' in content:
             if version.lower()=="java":
@@ -2971,7 +3507,7 @@ async def mzmpwhitelist(ctx, version, *, tag):
             elif version.lower()=="bedrock":
                 print(f"\n\n----WHITELIST----\n{ctx.author} attempted to whitelist {bTag}...\nSTATUS:\n  UNSUCCESSFUL: User was not added to the whitelist - player does not exist\n----WHITELIST----\n\n")
         elif 'whitelist add' in content:
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await console.history(limit=1).flatten())[0].content
             if 'already whitelisted' in content:
                 if version.lower()=="java":
@@ -3018,19 +3554,19 @@ async def mzmpstatus(ctx):
         if result==0:
             await ctx.send("ㅤ\nServer domain response check passed")
             await mzmpconsole.send("ping")
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await mzmpconsole.history(limit=1).flatten())[0].content
             if content != "ping" and "```" in content:
                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
             else:
                 await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await mzmpconsole.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await mzmpconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3063,7 +3599,7 @@ async def mzmpstart(ctx):
         if result==0:
             await ctx.send("ㅤ\nServer domain response check passed")
             await mzmpconsole.send("ping")
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await mzmpconsole.history(limit=1).flatten())[0].content
             if content != "ping" and "```" in content:
                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3072,7 +3608,7 @@ async def mzmpstart(ctx):
                 await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
             else:
                 await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await mzmpconsole.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3081,7 +3617,7 @@ async def mzmpstart(ctx):
                     await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await mzmpconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3111,8 +3647,8 @@ async def mzmpstart(ctx):
     else:
         await ctx.send("ㅤ\nServer is not open on local host")
         await ctx.send("ㅤ\nStarting server...")
-        path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\mzmp\\1--START.cmd"
-        subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd", shell=True)
+        path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\MZMP.cmd"
+        sub.Popen(f"start cmd /k {path}", shell=True)
         await ctx.send("ㅤ\nServer startup initiated")
         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
     sock.close()
@@ -3126,7 +3662,7 @@ async def mzmpip(ctx):
 async def mzmplockdown(ctx, mode="staff"):
     console=client.get_channel(1006963820830404658)
     await console.send("whitelist list")
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     content=(await console.history(limit=1).flatten())[0].content
     a=content.split("There are ",1)[1]
     before, sep, after=a.partition(" whitelisted players: ")
@@ -3150,7 +3686,7 @@ async def mzmplockdown(ctx, mode="staff"):
         num=0
         f=open(f"MZMPWLbackup{whitelistCount}.txt", "w+")
         await console.send("whitelist list")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         before, sep, content=content.partition("players: ")
         content, sep, after=content.partition("\n")
@@ -3377,7 +3913,7 @@ async def mzmplockdown(ctx, mode="staff"):
         num=0
         f=open(f"MZMPWLbackup{whitelistCount}.txt", "w+")
         await console.send("whitelist list")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await console.history(limit=1).flatten())[0].content
         before, sep, content=content.partition("players: ")
         content, sep, after=content.partition("\n")
@@ -3439,7 +3975,7 @@ async def mzmplp(ctx, *, params):
     mzmpconsole=client.get_channel(1006963820830404658)
     if params.lower().startswith("editor"):
         await mzmpconsole.send("lp editor")
-        await asyncio.sleep(2)
+        await aio.sleep(2)
         content=(await mzmpconsole.history(limit=1).flatten())[0].content
         if "https://luckperms.net/editor/" in content:
             before, sep, editor=content.partition("https://luckperms.net/editor/")
@@ -3450,7 +3986,7 @@ async def mzmplp(ctx, *, params):
             else:
                 await ctx.author.send(editor)
         else:
-            await asyncio.sleep(2)
+            await aio.sleep(2)
             content=(await mzmpconsole.history(limit=1).flatten())[0].content
             if "https://luckperms.net/editor/" in content:
                 before, sep, editor=content.partition("https://luckperms.net/editor/")
@@ -3461,7 +3997,7 @@ async def mzmplp(ctx, *, params):
                 else:
                     await ctx.author.send(editor)
             else:
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await mzmpconsole.history(limit=1).flatten())[0].content
                 if "https://luckperms.net/editor/" in content:
                     if "https://luckperms.net/editor/" in content:
@@ -3470,8 +4006,6 @@ async def mzmplp(ctx, *, params):
                         if "```" in editor:
                             editor, sep, after=editor.partition("```")
                         await ctx.author.send(f"https://luckperms.net/editor/{editor}")
-                    else:
-                        await ctx.author.send(editor)
                 else:
                     ctx.author.send("unable to get Luckperms Data")
     elif params.lower().startswith("user "):
@@ -3505,7 +4039,7 @@ async def mzmpconsole(ctx, display, *, cmd):
     channel=discord.utils.get(ctx.author.guild.text_channels, name="⚡︱modded-console")
     await channel.send(cmd)
     console=client.get_channel(1006963820830404658)
-    await asyncio.sleep(2)
+    await aio.sleep(2)
     content=(await console.history(limit=1).flatten())[0].content
     if display=="true":
         await ctx.send(content)
@@ -3535,7 +4069,7 @@ async def mzmpserver(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await mzmpconsole.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await mzmpconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3544,7 +4078,7 @@ async def mzmpserver(ctx, mode, command=""):
                         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await mzmpconsole.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3553,7 +4087,7 @@ async def mzmpserver(ctx, mode, command=""):
                             await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await mzmpconsole.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3583,8 +4117,8 @@ async def mzmpserver(ctx, mode, command=""):
             else:
                 await ctx.send("ㅤ\nServer is not open on local host")
                 await ctx.send("ㅤ\nStarting server...")
-                path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\mzmp\\1--START.cmd"
-                subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd", shell=True)
+                path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\MZMP.cmd"
+                sub.Popen(f"start cmd /k {path}", shell=True)
                 await ctx.send("ㅤ\nServer startup initiated")
                 await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
             sock.close()
@@ -3606,19 +4140,19 @@ async def mzmpserver(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await mzmpconsole.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await mzmpconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await mzmpconsole.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await mzmpconsole.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3636,36 +4170,36 @@ async def mzmpserver(ctx, mode, command=""):
             os.remove(r"C:\Users\Overdrive\Desktop\MINECRAFT_SERVERS\modded\ssOfWindow.png")
         elif command.lower()=="whitelist":
             await mzmpconsole.send("whitelist list")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await mzmpconsole.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("players: ")
             content, sep, after=content.partition("\n")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass
             await ctx.send(f"```{content}```")
         elif command.lower()=="players":
             await mzmpconsole.send("list")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await mzmpconsole.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("/list")
             before, sep, content=content.partition("] ")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass
             await ctx.send(f"```{content}```")
         elif command.lower()=="tps":
             await mzmpconsole.send("tps")
-            await asyncio.sleep(4)
+            await aio.sleep(4)
             content=(await mzmpconsole.history(limit=1).flatten())[0].content
             before, sep, content=content.partition("] ")
             content, sep, after=content.partition("```")
             if content=="":
-                await asyncio.sleep(2)
+                await aio.sleep(2)
             else:
                 pass 
             await ctx.send(f"```{content}```")
@@ -3682,7 +4216,7 @@ async def mzmpserver(ctx, mode, command=""):
             if result==0:
                 await ctx.send("ㅤ\nServer domain response check passed")
                 await mzmpconsole.send("ping")
-                await asyncio.sleep(2)
+                await aio.sleep(2)
                 content=(await mzmpconsole.history(limit=1).flatten())[0].content
                 if content != "ping" and "```" in content:
                     await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3691,7 +4225,7 @@ async def mzmpserver(ctx, mode, command=""):
                     await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                 else:
                     await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await mzmpconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3700,7 +4234,7 @@ async def mzmpserver(ctx, mode, command=""):
                         await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await mzmpconsole.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3731,8 +4265,8 @@ async def mzmpserver(ctx, mode, command=""):
         else:
             await ctx.send("ㅤ\nServer is not open on local host")
             await ctx.send("ㅤ\nStarting server...")
-            path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\mzmp\\1--START.cmd"
-            subprocess.Popen(f"start /wait cmd /c {path}1--START.cmd", shell=True)
+            path="C:\\Users\\Overdrive\\Desktop\\MINECRAFT_SERVERS\\MZMP.cmd"
+            sub.Popen(f"start cmd /k {path}", shell=True)
             await ctx.send("ㅤ\nServer startup initiated")
             await ctx.send(content=f"ㅤ\n**OPERATION COMPLETE**")
         sock.close()
@@ -3750,19 +4284,19 @@ async def mzmpserver(ctx, mode, command=""):
                 if result==0:
                     await ctx.send("ㅤ\nServer domain response check passed")
                     await mzmpconsole.send("ping")
-                    await asyncio.sleep(2)
+                    await aio.sleep(2)
                     content=(await mzmpconsole.history(limit=1).flatten())[0].content
                     if content != "ping" and "```" in content:
                         await ctx.send("ㅤ\nDiscordSRV console response check passed")
                     else:
                         await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                        await asyncio.sleep(2)
+                        await aio.sleep(2)
                         content=(await mzmpconsole.history(limit=1).flatten())[0].content
                         if content != "ping" and "```" in content:
                             await ctx.send("ㅤ\nDiscordSRV console response check passed")
                         else:
                             await ctx.send("ㅤ\nDiscordSRV console response check failed. Retrying...")
-                            await asyncio.sleep(2)
+                            await aio.sleep(2)
                             content=(await mzmpconsole.history(limit=1).flatten())[0].content
                             if content != "ping" and "```" in content:
                                 await ctx.send("ㅤ\nDiscordSRV console response check passed")
@@ -3778,61 +4312,4 @@ async def mzmpserver(ctx, mode, command=""):
         await mzmpconsole.send("stop")
         await ctx.send("ㅤ\nServer stopped")
 
-@client.event
-async def on_raw_reaction_add(payload):
-    if payload.message_id==1005259643326582805:
-        channel=client.get_channel(payload.channel_id)
-        message=await channel.fetch_message(payload.message_id)
-        user=client.get_user(payload.user_id)
-        emoji=client.get_emoji(1005266474778247219)
-        await message.remove_reaction(emoji, user)
-    emojiName=str(payload)
-    emojiName, sep, after=emojiName.partition("event_type=")
-    before, sep, emojiName=emojiName.partition("animated=")
-    before, sep, emojiName=emojiName.partition("name='")
-    emojiName, sep, after=emojiName.partition("' id")
-    user=str(payload)
-    before, sep, user=user.partition("member=<Member id=")
-    user, sep, after=user.partition("bot=")
-    before, sep, user=user.partition("name='")
-    user, sep, after=user.partition("' discriminator='")
-    discriminator=str(payload)
-    before, sep, discriminator=discriminator.partition("discriminator='")
-    discriminator, sep, after=discriminator.partition("' bot=")
-    serverID=str(payload)
-    before, sep, serverID=serverID.partition("guild=<Guild id=")
-    serverID, sep, after=serverID.partition(" name='")
-    serverName=str(payload)
-    before, sep, serverName=serverName.partition("guild=<Guild id=")
-    before, sep, serverName=serverName.partition(" name='")
-    serverName, sep, after=serverName.partition("'")
-    print(f"{user}#{discriminator} added reaction ({emojiName}) in server {serverName} ({serverID}).")
-    f=open("recentReactions.txt", "a", encoding="utf-8")
-    f.write(f"{emojiName}, ")
-    f.close()
-    f=open("recentReactions.txt", "r", encoding="utf-8")
-    contents=f.read()
-    if secret("reactionCombo") in contents:
-        f.close()
-        owner_channel=client.get_channel(990393301247098900)
-        now=datetime.now()
-        dateTime=now.strftime("%d/%m/%Y %H:%M:%S")
-        date, sep, time=dateTime.partition(" ")
-        sendSMS(messageSubject="URGENT ZMP ALERT", messageBody=f"{date} | {time}\n\nTag: {user}#{discriminator}\nUser initiated a server-wide halt. All servers have stopped, and the discord bot has been closed.\"")
-        stopServer("ZMP")
-        await asyncio.sleep(2)
-        stopServer("MZMP")
-        await asyncio.sleep(2)
-        stopServer("BUILD")
-        await owner_channel.send(f"**WARNING**\n\n**All servers have halted.**\n{user}#{discriminator} initiated this lockdown by reporting that **Zoe's account has been hacked.**\n**DO NOT TRUST ANY MESSAGES FROM ZOE AT THIS TIME**\nOnly after the servers have started should you trust her account.\nThis bot will now terminate.")
-        os.remove("recentReactions.txt")
-        await client.close()
-    reactions=secret("reactionCombo").split(", ")
-    for i in reactions:
-        if i not in emojiName:
-            f.close()
-            os.remove("recentReactions.txt")
-    else:
-        f.close()
-
-client.run(secret("TOKEN"))
+client.run(str(os.getenv("TOKEN")))
